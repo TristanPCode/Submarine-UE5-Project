@@ -21,6 +21,17 @@ enum class ESubmarineCollisionType : uint8
 };
 
 // ---------------------------------------------
+//  Camera state enum
+// ---------------------------------------------
+UENUM(BlueprintType)
+enum class ESubmarineCameraState : uint8
+{
+    POV,
+    Periscope,
+    ThirdPerson
+};
+
+// ---------------------------------------------
 //  One entry in the bounce force table
 // ---------------------------------------------
 USTRUCT(BlueprintType)
@@ -37,6 +48,21 @@ struct FCollisionBounceEntry
      */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Collision")
     float BounceForce = 600.f;
+
+    /**
+     * Multiply the spinning force after an impact.
+     * Higher = stronger spin.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Collision")
+    float Collision_RotationFactor = 0.5f;
+
+    /**
+     * Percentage of speed lost after an impact.
+     * 0.0: no lose, 1.0: full stop.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Collision",
+        meta = (ClampMin = "0.0", ClampMax = "1.0"))
+    float SpeedLost = 0.2f;
 
     /**
      * How many linear speed states are lost on impact.
@@ -64,7 +90,7 @@ enum class ELinearSpeedState : uint8
 };
 
 // ---------------------------------------------
-//  One entry in the linear speed table
+//  Linear speed table entry
 // ---------------------------------------------
 USTRUCT(BlueprintType)
 struct FLinearSpeedEntry
@@ -149,6 +175,14 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Vertical Movement")
     float VerticalSnapSpeed = 40.f;
 
+    /**
+     * Duration in seconds of the smooth blend when snapping to nearest pitch state.
+     * During this time the submarine glides smoothly to the target angle.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Vertical Movement",
+        meta = (ClampMin = "0.0"))
+    float PitchSnapBlendDuration = 0.12f;
+
     // -- Yaw (turning) ---------------------------
 
     /** Maximum yaw rotation speed (degrees/s) */
@@ -159,7 +193,7 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Yaw")
     float YawAcceleration = 5.f;
 
-    // -- Speed boost cross-effects -------------
+    // -- Speed boost cross-effects ---------------
 
     /** % boost applied to vertical speed when LinearSpeedState == Stand (0.4 = 40%) */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Speed Boost",
@@ -186,7 +220,7 @@ public:
         meta = (ClampMin = "0.0"))
     float DamageResistance = 1.f;
 
-    // -- Collision ----------------------------------
+    // -- Collision --------------------------------
 
     /**
      * Per-object-type bounce force and speed penalty table.
@@ -195,6 +229,106 @@ public:
      */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Collision")
     TArray<FCollisionBounceEntry> CollisionBounceTable;
+
+    /**
+     * Deceleration of the bounce force for linear movement.
+     * Higher = stronger spin.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Collision")
+    float Deceleration_Linear = 10.0f;
+
+    /**
+     * Deceleration of the bounce force for rotation.
+     * Higher = stronger spin.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Collision")
+    float Deceleration_Rotation = 60.0f;
+
+    /**
+     * Divisor for speed-proportional bounce force scaling.
+     * BounceForce is multiplied by (DefaultMult + |CurrentLinearSpeed| / BounceSpeedDivisor).
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Collision",
+        meta = (ClampMin = "1.0"))
+    float BounceSpeedDivisor = 800.f;
+
+    /**
+     * Multiplier for bounce force with no speed.
+     * BounceForce is multiplied by (0.2 + |CurrentLinearSpeed| / BounceSpeedDivisor).
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Collision",
+        meta = (ClampMin = "0.0", ClampMax = "1.0"))
+    float DefaultMult = 0.2f;
+
+    // -- Camera (POV) -----------------------------
+
+    /** Hold duration in seconds to trigger camera switch to Periscope (P key) */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera|Switching")
+    float CameraSwitchHoldDuration = 0.3f;
+
+    /** If false, F1 / 3rd person mode is disabled entirely */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera|Switching")
+    bool bEnable3rdPersonCamera = false;
+
+    // -- Camera (Periscope) -----------------------
+
+    /** Local offset of the periscope camera relative to submarine root */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera|Periscope")
+    FVector PeriscopeCameraOffset = FVector(50.f, 0.f, 280.f);
+
+    /** Sensitivity of mouse X rotation in periscope mode (degrees/unit) */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera|Periscope")
+    float PeriscopeYawSensitivity = 1.f;
+
+    // -- Camera (3rd Person) ----------------------
+
+    /** Local offset of the 3rd person camera pivot relative to submarine root */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera|ThirdPerson")
+    FVector ThirdPersonPivotOffset = FVector(0.f, 0.f, 50.f);
+
+    /** Starting distance from submarine center */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera|ThirdPerson")
+    float ThirdPersonInitialRadius = 1200.f;
+
+    /** Minimum zoom distance */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera|ThirdPerson",
+        meta = (ClampMin = "100.0"))
+    float ThirdPersonMinRadius = 400.f;
+
+    /** Maximum zoom distance */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera|ThirdPerson")
+    float ThirdPersonMaxRadius = 3000.f;
+
+    /** Scroll zoom speed (radius change per scroll unit) */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera|ThirdPerson")
+    float ThirdPersonScrollSpeed = 200.f;
+
+    /** Mouse X sensitivity for orbiting (degrees/unit) */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera|ThirdPerson")
+    float ThirdPersonYawSensitivity = 1.f;
+
+    /** Mouse Y sensitivity for orbiting (degrees/unit) */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera|ThirdPerson")
+    float ThirdPersonPitchSensitivity = 1.f;
+
+    /** Initial horizontal orbit angle in degrees */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera|ThirdPerson")
+    float ThirdPersonInitialYaw = 180.f;
+
+    /** Initial vertical orbit angle in degrees (0=horizon, 90=top) */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera|ThirdPerson",
+        meta = (ClampMin = "-89.0", ClampMax = "89.0"))
+    float ThirdPersonInitialPitch = 20.f;
+
+    /** Minimum vertical orbit angle (prevents going below submarine) */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera|ThirdPerson",
+        meta = (ClampMin = "-89.0"))
+    float ThirdPersonMinPitch = -80.f;
+
+    /** Maximum vertical orbit angle (prevents flipping over top) */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera|ThirdPerson",
+        meta = (ClampMin = "0.0", ClampMax = "89.0"))
+    float ThirdPersonMaxPitch = 80.f;
 
     // -- Helpers (callable from C++ & BP) ------
 

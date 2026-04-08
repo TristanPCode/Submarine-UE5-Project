@@ -17,17 +17,17 @@ USubmarineCharacteristics::USubmarineCharacteristics()
 
     // Populate default collision bounce table
     // Landscape: softer bounce, loses 1 state
-    CollisionBounceTable.Add({ ESubmarineCollisionType::Landscape,      400.f, 1 });
+    CollisionBounceTable.Add({ ESubmarineCollisionType::Landscape,      400.f, 0.3f, 0.1f, 1 });
     // Static obstacles: medium bounce, loses 2 states
-    CollisionBounceTable.Add({ ESubmarineCollisionType::StaticObstacle, 800.f, 2 });
+    CollisionBounceTable.Add({ ESubmarineCollisionType::StaticObstacle, 800.f, 0.5f, 0.2f, 2 });
     // Other submarines: strong bounce, loses 2 states
-    CollisionBounceTable.Add({ ESubmarineCollisionType::OtherSubmarine, 900.f, 2 });
+    CollisionBounceTable.Add({ ESubmarineCollisionType::OtherSubmarine, 900.f, 0.5f, 0.2f, 2 });
     // Torpedo: force only (damage handled by health system), loses 1 state
-    CollisionBounceTable.Add({ ESubmarineCollisionType::Torpedo,        600.f, 1 });
+    CollisionBounceTable.Add({ ESubmarineCollisionType::Torpedo,        600.f, 0.4f, 0.1f, 1 });
     // Trigger zones: no bounce at all
-    CollisionBounceTable.Add({ ESubmarineCollisionType::TriggerZone,      0.f, 0 });
+    CollisionBounceTable.Add({ ESubmarineCollisionType::TriggerZone,      0.f, 0.0f, 0.0f, 0 });
     // Default fallback
-    CollisionBounceTable.Add({ ESubmarineCollisionType::Default,        500.f, 1 });
+    CollisionBounceTable.Add({ ESubmarineCollisionType::Default,        500.f, 0.0f, 0.0f, 0 });
 }
 
 float USubmarineCharacteristics::GetLinearTargetSpeed(ELinearSpeedState State) const

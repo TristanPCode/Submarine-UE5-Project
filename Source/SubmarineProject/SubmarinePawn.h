@@ -25,6 +25,17 @@ class SUBMARINEPROJECT_API ASubmarinePawn : public APawn
 public:
     ASubmarinePawn();
 
+    // -- External velocity accessors (used by collision component) ------------
+    float GetExternalLinearVelocity() { return ExternalLinearVelocity; }
+    float GetExternalVerticalVelocity() { return ExternalVerticalVelocity; }
+    float GetExternalYawVelocity() { return ExternalYawVelocity; }
+    float GetExternalPitchVelocity() { return ExternalPitchVelocity; }
+
+    void SetExternalLinearVelocity(float V) { ExternalLinearVelocity = V; }
+    void SetExternalVerticalVelocity(float V) { ExternalVerticalVelocity = V; }
+    void SetExternalYawVelocity(float V) { ExternalYawVelocity = V; }
+    void SetExternalPitchVelocity(float V) { ExternalPitchVelocity = V; }
+
 protected:
     virtual void BeginPlay() override;
 
@@ -54,16 +65,31 @@ public:
     TObjectPtr<UInputMappingContext> SubmarineMappingContext;
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Submarine|Input")
-    TObjectPtr<UInputAction> IA_MoveForward;   // Triggered / Completed
+    TObjectPtr<UInputAction> IA_MoveForward;     // Triggered / Completed
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Submarine|Input")
-    TObjectPtr<UInputAction> IA_MoveRight;     // Axis 1D
+    TObjectPtr<UInputAction> IA_MoveRight;       // Axis 1D
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Submarine|Input")
-    TObjectPtr<UInputAction> IA_MoveUp;        // Triggered / Completed
+    TObjectPtr<UInputAction> IA_MoveUp;          // Triggered / Completed
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Submarine|Input")
-    TObjectPtr<UInputAction> IA_Turn;          // Axis 1D
+    TObjectPtr<UInputAction> IA_Turn;            // Axis 1D
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Submarine|Input")
+    TObjectPtr<UInputAction> IA_MouseX;          // Axis 1D
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Submarine|Input")
+    TObjectPtr<UInputAction> IA_MouseY;          // Axis 1D
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Submarine|Input")
+    TObjectPtr<UInputAction> IA_ScrollZoom;      // Axis 1D
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Submarine|Input")
+    TObjectPtr<UInputAction> IA_CameraPeriscope; // Digital
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Submarine|Input")
+    TObjectPtr<UInputAction> IA_Camera3rdPerson; // Digital
 
     // -- Runtime state (read-only from Blueprint) --------------------------
 
@@ -87,23 +113,46 @@ public:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Submarine|State")
     float CurrentPitch = 0.f;
 
-    // -- Camera Offset --------------------------
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Submarine|State")
+    ESubmarineCameraState CameraState = ESubmarineCameraState::POV;
+
+    // -- Camera Offset (POV) -----------------------------------------------
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Submarine|Camera")
     FVector CameraOffset = FVector(245.f, 0.f, 140.f);
 
 private:
     // -- Components --------------------------------------------------------
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
+    
+    UPROPERTY(VisibleAnywhere, Category = "Components")
+    TObjectPtr<UStaticMeshComponent> SubmarineBody;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components",
+        meta = (AllowPrivateAccess = "true"))
     TObjectPtr<UCameraComponent> Camera;
 
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
+    /** Periscope camera — attached to root, rotates independently on yaw */
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components",
+        meta = (AllowPrivateAccess = "true"))
+    TObjectPtr<UCameraComponent> PeriscopeCamera;
+
+    /**
+     * 3rd person camera — NOT attached to submarine root so it doesn't
+     * inherit submarine rotation. Updated manually in Tick.
+     */
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components",
+        meta = (AllowPrivateAccess = "true"))
+    TObjectPtr<UCameraComponent> ThirdPersonCamera;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components",
+        meta = (AllowPrivateAccess = "true"))
     TObjectPtr<UFloatingPawnMovement> Movement;
 
-    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components",
+        meta = (AllowPrivateAccess = "true"))
     TObjectPtr<USubmarineCollisionComponent> CollisionHandler;
 
-    // -- Hit callback --------------------------------------------------------
+    // -- Overlap ------------------------------------------------------------
     UFUNCTION()
     void OnOverlapBegin(UPrimitiveComponent* OverlappedComp, AActor* OtherActor,
         UPrimitiveComponent* OtherComp, int32 OtherBodyIndex,
@@ -133,8 +182,14 @@ private:
     /** How long the vertical key has been held (for non-linear ramp) */
     float VerticalHoldTime = 0.f;
 
+    /** Direction of the currently held vertical key (+1 up, -1 down, 0 none) */
+    float VerticalHeldDirection = 0.f;
+
     /** Target pitch we are interpolating toward (degrees) */
     float TargetPitch = 0.f;
+
+    /** Countdown timer for smooth pitch snap blend after releasing vertical key */
+    float PitchSnapBlendTimer = 0.f;
 
     /** Resolved vertical state count (safe, odd, >=3) cached on BeginPlay */
     int32 SafeVerticalStateCount = 11;
@@ -144,6 +199,43 @@ private:
 
     /** Finds the nearest state index to a given pitch */
     int32 FindNearestVerticalState(float Pitch) const;
+
+    // -- Turn (yaw) --------------------------------------------------------
+
+    /** Direction of currently held turn key (+1 right, -1 left, 0 none) */
+    float TurnHeldDirection = 0.f;
+
+    // -- Exterernal Velocity (from collisions) -----------------------------
+
+    float ExternalLinearVelocity = 0.f;
+    float ExternalVerticalVelocity = 0.f;
+    float ExternalYawVelocity = 0.f;
+    float ExternalPitchVelocity = 0.f;
+
+    // -- Camera state ------------------------------------------------------
+
+    /** Accumulated hold time for periscope switch button */
+    float PeriscopeHoldTimer = 0.f;
+    bool  bPeriscopeHeld = false;
+
+    /** Accumulated hold time for 3rd person switch button */
+    float ThirdPersonHoldTimer = 0.f;
+    bool  bThirdPersonHeld = false;
+
+    /** Periscope yaw offset relative to submarine forward (degrees) */
+    float PeriscopeYawOffset = 0.f;
+
+    /** 3rd person spherical orbit angles (world-space yaw, pitch) */
+    float ThirdPersonOrbitYaw = 180.f;
+    float ThirdPersonOrbitPitch = 20.f;
+    float ThirdPersonRadius = 1200.f;
+
+    void ActivateCamera(ESubmarineCameraState NewState);
+    void TickCameraSwitch(float DeltaTime);
+    void TickPeriscopeCamera();
+    void TickThirdPersonCamera();
+
+    // -- Tick helpers -------------------------------------------------------
 
     void TickLinearMovement(float DeltaTime);
     void TickVerticalMovement(float DeltaTime);
@@ -159,7 +251,18 @@ private:
     void OnMoveUpTriggered(const FInputActionValue& Value);
     void OnMoveUpCompleted(const FInputActionValue& Value);
 
-    void OnTurn(const FInputActionValue& Value);
+    void OnTurnTriggered(const FInputActionValue& Value);
+    void OnTurnCompleted(const FInputActionValue& Value);
+
+    void OnMouseX(const FInputActionValue& Value);
+    void OnMouseY(const FInputActionValue& Value);
+    void OnScrollZoom(const FInputActionValue& Value);
+
+    void OnCameraPeriscopeTriggered(const FInputActionValue& Value);
+    void OnCameraPeriscopeCompleted(const FInputActionValue& Value);
+
+    void OnCamera3rdPersonTriggered(const FInputActionValue& Value);
+    void OnCamera3rdPersonCompleted(const FInputActionValue& Value);
 
     // -- Helpers -----------------------------------------------------------
 

@@ -5,6 +5,7 @@
 #include "TorpedoCharacteristics.h"
 #include "GameFramework/Actor.h"
 #include "Components/PrimitiveComponent.h"
+#include "Landscape.h"
 
 USubmarineCollisionComponent::USubmarineCollisionComponent()
 {
@@ -48,11 +49,10 @@ void USubmarineCollisionComponent::ApplyDamage(float RawDamage, AActor* DamageCa
 
 void USubmarineCollisionComponent::ProcessHit(const FHitResult& Hit, AActor* OtherActor)
 {
-    if (!OtherActor || !IsValid(OtherActor) || OtherActor->IsTemplate())
+    if (!OtherActor || !IsValid(OtherActor) || OtherActor->IsTemplate() || OtherActor == GetOwner())
         return;
 
     const ESubmarineCollisionType ColType = ResolveCollisionType(OtherActor);
-
     if (ColType == ESubmarineCollisionType::TriggerZone)
         return;
 
@@ -61,7 +61,7 @@ void USubmarineCollisionComponent::ProcessHit(const FHitResult& Hit, AActor* Oth
 
     const FCollisionBounceEntry BounceData = Stats->GetCollisionBounce(ColType);
 
-    // Compute bounce direction from other actor position if normal is invalid
+    // Compute bounce direction from positions if normal is invalid
     FHitResult AdjustedHit = Hit;
     if (Hit.ImpactNormal.IsNearlyZero())
     {
@@ -83,32 +83,69 @@ void USubmarineCollisionComponent::ProcessHit(const FHitResult& Hit, AActor* Oth
 }
 
 // -----------------------------------------------------------------------------
+//  Overlap processing (Blueprint callable)
+// -----------------------------------------------------------------------------
+
+void USubmarineCollisionComponent::ProcessOverlap(AActor* OtherActor)
+{
+    if (!OtherActor || !IsValid(OtherActor) || OtherActor->IsTemplate() || OtherActor == GetOwner())
+        return;
+
+    UE_LOG(LogTemp, Warning, TEXT("ProcessOverlap with: %s"), *OtherActor->GetName());
+
+    const ESubmarineCollisionType ColType = ResolveCollisionType(OtherActor);
+    if (ColType == ESubmarineCollisionType::TriggerZone)
+        return;
+
+    const USubmarineCharacteristics* Stats = GetStats();
+    if (!Stats) return;
+
+    const FCollisionBounceEntry BounceData = Stats->GetCollisionBounce(ColType);
+
+    // Compute bounce direction from actor positions
+    FVector Dir = FVector::ZeroVector;
+    if (AActor* Owner = GetOwner())
+    {
+        Dir = Owner->GetActorLocation() - OtherActor->GetActorLocation();
+        Dir.Normalize();
+    }
+
+    FHitResult FakeHit;
+    FakeHit.ImpactNormal = Dir;
+
+    ApplyBounce(FakeHit, BounceData);
+
+    if (ColType == ESubmarineCollisionType::Torpedo)
+        ApplyDamage(25.f, OtherActor);
+
+    OnBounced.Broadcast(ColType, Dir);
+}
+
+// -----------------------------------------------------------------------------
 //  Collision type resolution
 // -----------------------------------------------------------------------------
 
 ESubmarineCollisionType USubmarineCollisionComponent::ResolveCollisionType(AActor* OtherActor) const
 {
-    if (!OtherActor)
+    if (!OtherActor || !IsValid(OtherActor))
         return ESubmarineCollisionType::Default;
 
-    // Landscape check by class name (avoids Landscape module dependency issues)
-    const FString ClassName = OtherActor->GetClass()->GetName();
-    if (ClassName.Contains(TEXT("Landscape")))
-        return ESubmarineCollisionType::Landscape;
-
-    // Torpedo check — by actor tag (add "Torpedo" tag to your torpedo Blueprint)
+    // Torpedo check
     if (OtherActor->ActorHasTag(FName("Torpedo")))
         return ESubmarineCollisionType::Torpedo;
 
-    // Other submarine check — by actor tag or class
+    // Other submarine check
     if (OtherActor->IsA<ASubmarinePawn>() || OtherActor->ActorHasTag(FName("Submarine")))
         return ESubmarineCollisionType::OtherSubmarine;
 
-    // Trigger zone check — by actor tag
+    // Trigger zone check
     if (OtherActor->ActorHasTag(FName("TriggerZone")))
         return ESubmarineCollisionType::TriggerZone;
 
-    // Everything else is a static obstacle
+    // Landscape check by class name
+    if (OtherActor->IsA<ALandscape>())
+        return ESubmarineCollisionType::Landscape;
+
     return ESubmarineCollisionType::StaticObstacle;
 }
 
@@ -124,6 +161,13 @@ void USubmarineCollisionComponent::ApplyBounce(const FHitResult& Hit,
 
     ASubmarinePawn* OwnerPawn = Cast<ASubmarinePawn>(GetOwner());
     if (!OwnerPawn) return;
+
+    const USubmarineCharacteristics* Stats = GetStats();
+    if (!Stats) return;
+
+    // -- SpeedLost reduce CurrentLinearSpeed by percentage -----------------
+    if (BounceData.SpeedLost > 0.f)
+        OwnerPawn->CurrentLinearSpeed *= (1.f - BounceData.SpeedLost);
 
     // -- Speed state penalty ------------------------------------------------
     // Move the linear state toward Stand by the penalty amount
@@ -145,15 +189,32 @@ void USubmarineCollisionComponent::ApplyBounce(const FHitResult& Hit,
     // Apply an instant velocity kick along the impact normal
     if (BounceData.BounceForce > 0.f)
     {
+        const float SpeedScale = Stats->DefaultMult + FMath::Abs(OwnerPawn->CurrentLinearSpeed) / FMath::Max(Stats->BounceSpeedDivisor, 1.f);
+
         const FVector BounceVelocity = Hit.ImpactNormal * BounceData.BounceForce;
         // We inject directly into CurrentLinearSpeed along forward axis,
         // and a world-Z component for vertical bounce
-        const float ForwardComponent = FVector::DotProduct(
+        /*const float ForwardComponent = FVector::DotProduct(
             BounceVelocity, OwnerPawn->GetActorForwardVector());
-        const float VerticalComponent = BounceVelocity.Z;
+        const float VerticalComponent = BounceVelocity.Z;*/
 
-        OwnerPawn->CurrentLinearSpeed += ForwardComponent;
-        OwnerPawn->CurrentVerticalSpeed += VerticalComponent;
+        const FVector LocalBounce =
+            OwnerPawn->GetActorTransform().InverseTransformVectorNoScale(BounceVelocity);
+
+        float NewExternalLinearVelocity = OwnerPawn->GetExternalLinearVelocity() + LocalBounce.X * SpeedScale;
+        OwnerPawn->SetExternalLinearVelocity(NewExternalLinearVelocity);
+
+        float NewExternalVerticalVelocity = OwnerPawn->GetExternalVerticalVelocity() + LocalBounce.Z;
+        OwnerPawn->SetExternalVerticalVelocity(NewExternalVerticalVelocity);
+
+        const float RotationFactor = BounceData.Collision_RotationFactor;
+
+        float NewExternalYawVelocity = OwnerPawn->GetExternalYawVelocity() + LocalBounce.Y * RotationFactor;
+        OwnerPawn->SetExternalYawVelocity(NewExternalYawVelocity);
+
+        float NewExternalPitchVelocity = OwnerPawn->GetExternalPitchVelocity() + -LocalBounce.X * RotationFactor;
+        OwnerPawn->SetExternalPitchVelocity(NewExternalPitchVelocity);
+
     }
 }
 
