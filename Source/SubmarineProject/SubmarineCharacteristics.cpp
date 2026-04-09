@@ -66,6 +66,30 @@ float USubmarineCharacteristics::GetPitchForVerticalState(int32 StateIndex) cons
     return Alpha * MaxPitchAngle;
 }
 
+int32 USubmarineCharacteristics::GetSafeGhostStateCount() const
+{
+    const int32 SafeTotal = GetSafeVerticalStateCount();
+    // Must be even
+    int32 Ghost = (GhostVerticalStateCount % 2 != 0)
+        ? GhostVerticalStateCount + 1
+        : GhostVerticalStateCount;
+    // Clamp: at least 0, at most SafeTotal - 3 (keep Max, Stand, Min active)
+    Ghost = FMath::Clamp(Ghost, 0, SafeTotal - 3);
+    return Ghost;
+}
+
+bool USubmarineCharacteristics::IsGhostState(int32 StateIndex) const
+{
+    const int32 Count = GetSafeVerticalStateCount();
+    const int32 MidIndex = Count / 2;
+    const int32 GhostHalf = GetSafeGhostStateCount() / 2;
+    if (GhostHalf <= 0) return false;
+
+    // Ghost states are the GhostHalf states on each side of the center
+    const int32 DistFromCenter = FMath::Abs(StateIndex - MidIndex);
+    return (DistFromCenter > 0 && DistFromCenter <= GhostHalf);
+}
+
 FCollisionBounceEntry USubmarineCharacteristics::GetCollisionBounce(ESubmarineCollisionType CollisionType) const
 {
     // First pass: look for exact type match

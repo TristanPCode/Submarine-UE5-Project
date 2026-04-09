@@ -12,6 +12,7 @@ class UFloatingPawnMovement;
 class UInputMappingContext;
 class UInputAction;
 class USubmarineCollisionComponent;
+class USubmarinePhysicsComponent;
 struct FInputActionValue;
 
 // -----------------------------------------------------------------------------
@@ -71,10 +72,16 @@ public:
     TObjectPtr<UInputAction> IA_MoveRight;       // Axis 1D
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Submarine|Input")
-    TObjectPtr<UInputAction> IA_MoveUp;          // Triggered / Completed
+    TObjectPtr<UInputAction> IA_MoveUp_Positive; // Triggered / Completed
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Submarine|Input")
-    TObjectPtr<UInputAction> IA_Turn;            // Axis 1D
+    TObjectPtr<UInputAction> IA_MoveUp_Negative; // Triggered / Completed
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Submarine|Input")
+    TObjectPtr<UInputAction> IA_Turn_Positive;  // Triggered / Completed
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Submarine|Input")
+    TObjectPtr<UInputAction> IA_Turn_Negative;  // Triggered / Completed
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Submarine|Input")
     TObjectPtr<UInputAction> IA_MouseX;          // Axis 1D
@@ -90,6 +97,14 @@ public:
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Submarine|Input")
     TObjectPtr<UInputAction> IA_Camera3rdPerson; // Digital
+
+    // -- Input Pending (when both directions hold) -------------------------
+
+    bool bUpPressed = false;
+    bool bDownPressed = false;
+
+    bool bRightPressed = false;
+    bool bLeftPressed = false;
 
     // -- Runtime state (read-only from Blueprint) --------------------------
 
@@ -120,6 +135,12 @@ public:
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Submarine|Camera")
     FVector CameraOffset = FVector(245.f, 0.f, 140.f);
+
+    USubmarineCollisionComponent* GetCollisionHandler() const { return CollisionHandler; }
+
+    /** Switch camera from external code (spectator/replay system) */
+    UFUNCTION(BlueprintCallable, Category = "Submarine|Camera")
+    void ActivateCamera(ESubmarineCameraState NewState);
 
 private:
     // -- Components --------------------------------------------------------
@@ -152,11 +173,24 @@ private:
         meta = (AllowPrivateAccess = "true"))
     TObjectPtr<USubmarineCollisionComponent> CollisionHandler;
 
-    // -- Overlap ------------------------------------------------------------
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components",
+        meta = (AllowPrivateAccess = "true"))
+    TObjectPtr<USubmarinePhysicsComponent> PhysicsHandler;
+
+    // -- Overlap & anti-stuck collision -------------------------------------
     UFUNCTION()
     void OnOverlapBegin(UPrimitiveComponent* OverlappedComp, AActor* OtherActor,
         UPrimitiveComponent* OtherComp, int32 OtherBodyIndex,
         bool bFromSweep, const FHitResult& SweepResult);
+
+    UFUNCTION()
+    void OnOverlapEnd(UPrimitiveComponent* OverlappedComp, AActor* OtherActor,
+        UPrimitiveComponent* OtherComp, int32 OtherBodyIndex);
+
+    /** Tracks how long we have been overlapping each actor (seconds) */
+    TMap<TWeakObjectPtr<AActor>, float> OverlapDurations;
+
+    void TickAntiStuck(float DeltaTime);
 
     // -- Linear state machine internals -------------------------------------
 
@@ -188,8 +222,14 @@ private:
     /** Target pitch we are interpolating toward (degrees) */
     float TargetPitch = 0.f;
 
+    /** Pitch velocity between 2 Ticks (degrees) */
+    float PitchVelocity = 0.f;
+
     /** Countdown timer for smooth pitch snap blend after releasing vertical key */
     float PitchSnapBlendTimer = 0.f;
+
+    /** Accumulated angular momentum while holding vertical key (degrees/s) */
+    float PitchAngularMomentum = 0.f;
 
     /** Resolved vertical state count (safe, odd, >=3) cached on BeginPlay */
     int32 SafeVerticalStateCount = 11;
@@ -217,10 +257,12 @@ private:
     /** Accumulated hold time for periscope switch button */
     float PeriscopeHoldTimer = 0.f;
     bool  bPeriscopeHeld = false;
+    bool  bPeriscopeHoldFired = false;
 
     /** Accumulated hold time for 3rd person switch button */
     float ThirdPersonHoldTimer = 0.f;
     bool  bThirdPersonHeld = false;
+    bool  bThirdPersonHoldFired = false;
 
     /** Periscope yaw offset relative to submarine forward (degrees) */
     float PeriscopeYawOffset = 0.f;
@@ -230,7 +272,6 @@ private:
     float ThirdPersonOrbitPitch = 20.f;
     float ThirdPersonRadius = 1200.f;
 
-    void ActivateCamera(ESubmarineCameraState NewState);
     void TickCameraSwitch(float DeltaTime);
     void TickPeriscopeCamera();
     void TickThirdPersonCamera();
@@ -248,19 +289,28 @@ private:
 
     void OnMoveRight(const FInputActionValue& Value);
 
-    void OnMoveUpTriggered(const FInputActionValue& Value);
-    void OnMoveUpCompleted(const FInputActionValue& Value);
+    void UpdateVerticalInput();
+    void OnMoveUpPressed(const FInputActionValue&);
+    void OnMoveDownPressed(const FInputActionValue&);
+    void OnMoveUpReleased(const FInputActionValue&);
+    void OnMoveDownReleased(const FInputActionValue&);
 
-    void OnTurnTriggered(const FInputActionValue& Value);
-    void OnTurnCompleted(const FInputActionValue& Value);
+
+    void UpdateTurnInput();
+    void OnTurnRightPressed(const FInputActionValue&);
+    void OnTurnLeftPressed(const FInputActionValue&);
+    void OnTurnRightReleased(const FInputActionValue&);
+    void OnTurnLeftReleased(const FInputActionValue&);
 
     void OnMouseX(const FInputActionValue& Value);
     void OnMouseY(const FInputActionValue& Value);
     void OnScrollZoom(const FInputActionValue& Value);
 
+    void OnCameraPeriscopeStarted(const FInputActionValue& Value);
     void OnCameraPeriscopeTriggered(const FInputActionValue& Value);
     void OnCameraPeriscopeCompleted(const FInputActionValue& Value);
 
+    void OnCamera3rdPersonStarted(const FInputActionValue& Value);
     void OnCamera3rdPersonTriggered(const FInputActionValue& Value);
     void OnCamera3rdPersonCompleted(const FInputActionValue& Value);
 

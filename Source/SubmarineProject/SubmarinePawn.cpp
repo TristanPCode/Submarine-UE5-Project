@@ -3,6 +3,7 @@
 #include "SubmarinePawn.h"
 #include "SubmarineCharacteristics.h"
 #include "SubmarineCollisionComponent.h"
+#include "SubmarinePhysicsComponent.h"
 #include "Camera/CameraComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/FloatingPawnMovement.h"
@@ -46,6 +47,7 @@ ASubmarinePawn::ASubmarinePawn()
     Movement->UpdatedComponent = RootComponent;
 
     CollisionHandler = CreateDefaultSubobject<USubmarineCollisionComponent>(TEXT("CollisionHandler"));
+    PhysicsHandler = CreateDefaultSubobject<USubmarinePhysicsComponent>(TEXT("PhysicsHandler"));
 }
 
 // -----------------------------------------------------------------------------
@@ -61,6 +63,8 @@ void ASubmarinePawn::BeginPlay()
     VerticalStateIndex = SafeVerticalStateCount / 2;
     CurrentPitch = 0.f;
     TargetPitch = 0.f;
+    PitchAngularMomentum = 0.f;
+    PitchVelocity = 0.f;
 
     // Detach 3rd person camera from root so it doesn't inherit submarine rotation
     ThirdPersonCamera->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
@@ -96,13 +100,6 @@ void ASubmarinePawn::BeginPlay()
             if (SubmarineMappingContext)
                 Subsystem->AddMappingContext(SubmarineMappingContext, 0);
         }
-    }
-
-    if (Camera)
-    {
-        Camera->SetRelativeLocation(CameraOffset);
-        UE_LOG(LogTemp, Warning, TEXT("Applied CameraOffset: %s"),
-            *Camera->GetRelativeLocation().ToString());
     }
 }
 
@@ -152,17 +149,26 @@ void ASubmarinePawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCompo
     if (IA_MoveRight)
         EIC->BindAction(IA_MoveRight, ETriggerEvent::Triggered, this, &ASubmarinePawn::OnMoveRight);
 
-    if (IA_MoveUp)
+    if (IA_MoveUp_Positive)
     {
-        EIC->BindAction(IA_MoveUp, ETriggerEvent::Triggered, this,
-            &ASubmarinePawn::OnMoveUpTriggered);
-        EIC->BindAction(IA_MoveUp, ETriggerEvent::Completed, this,
-            &ASubmarinePawn::OnMoveUpCompleted);
+        EIC->BindAction(IA_MoveUp_Positive, ETriggerEvent::Started, this, &ASubmarinePawn::OnMoveUpPressed);
+        EIC->BindAction(IA_MoveUp_Positive, ETriggerEvent::Completed, this, &ASubmarinePawn::OnMoveUpReleased);
     }
-    if (IA_Turn)
+
+    if (IA_MoveUp_Negative)
     {
-        EIC->BindAction(IA_Turn, ETriggerEvent::Triggered, this, &ASubmarinePawn::OnTurnTriggered);
-        EIC->BindAction(IA_Turn, ETriggerEvent::Completed, this, &ASubmarinePawn::OnTurnCompleted);
+        EIC->BindAction(IA_MoveUp_Negative, ETriggerEvent::Started, this, &ASubmarinePawn::OnMoveDownPressed);
+        EIC->BindAction(IA_MoveUp_Negative, ETriggerEvent::Completed, this, &ASubmarinePawn::OnMoveDownReleased);
+    }
+    if (IA_Turn_Positive)
+    {
+        EIC->BindAction(IA_Turn_Positive, ETriggerEvent::Triggered, this, &ASubmarinePawn::OnTurnRightPressed);
+        EIC->BindAction(IA_Turn_Positive, ETriggerEvent::Completed, this, &ASubmarinePawn::OnTurnRightReleased);
+    }
+    if (IA_Turn_Negative)
+    {
+        EIC->BindAction(IA_Turn_Negative, ETriggerEvent::Triggered, this, &ASubmarinePawn::OnTurnLeftPressed);
+        EIC->BindAction(IA_Turn_Negative, ETriggerEvent::Completed, this, &ASubmarinePawn::OnTurnLeftReleased);
     }
 
     if (IA_MouseX)
@@ -176,11 +182,13 @@ void ASubmarinePawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCompo
 
     if (IA_CameraPeriscope)
     {
+        EIC->BindAction(IA_CameraPeriscope, ETriggerEvent::Started, this, &ASubmarinePawn::OnCameraPeriscopeStarted);
         EIC->BindAction(IA_CameraPeriscope, ETriggerEvent::Triggered, this, &ASubmarinePawn::OnCameraPeriscopeTriggered);
         EIC->BindAction(IA_CameraPeriscope, ETriggerEvent::Completed, this, &ASubmarinePawn::OnCameraPeriscopeCompleted);
     }
     if (IA_Camera3rdPerson)
     {
+        EIC->BindAction(IA_Camera3rdPerson, ETriggerEvent::Started, this, &ASubmarinePawn::OnCamera3rdPersonStarted);
         EIC->BindAction(IA_Camera3rdPerson, ETriggerEvent::Triggered, this, &ASubmarinePawn::OnCamera3rdPersonTriggered);
         EIC->BindAction(IA_Camera3rdPerson, ETriggerEvent::Completed, this, &ASubmarinePawn::OnCamera3rdPersonCompleted);
     }
@@ -240,6 +248,10 @@ void ASubmarinePawn::TickLinearMovement(float DeltaTime)
     if (bVerticalStand)
         TargetSpeed *= (1.f + Stats->LinearBoostWhenVerticalStand);
 
+    // Feed target to physics component
+    if (PhysicsHandler)
+        PhysicsHandler->TargetLinearSpeed = TargetSpeed;
+
     // Choose acceleration or deceleration rate
     const float Rate = (FMath::Abs(TargetSpeed) >= FMath::Abs(CurrentLinearSpeed))
         ? Stats->LinearAcceleration
@@ -264,29 +276,60 @@ void ASubmarinePawn::TickVerticalMovement(float DeltaTime)
             Stats->VerticalHoldAccelRate * VerticalHoldTime;
 
         // Apply free-form angle delta (bypasses states while held)
-        TargetPitch += VerticalAxisValue * AngularRate * DeltaTime;
+        const float PitchDelta = VerticalAxisValue * AngularRate * DeltaTime;
+        TargetPitch += PitchDelta;
         TargetPitch = FMath::Clamp(TargetPitch, -Stats->MaxPitchAngle, Stats->MaxPitchAngle);
+
+        // Accumulate angular momentum (degrees/s)
+        PitchAngularMomentum = FMath::FInterpTo(
+            PitchAngularMomentum, AngularRate * VerticalAxisValue, DeltaTime, 8.f);
 
         // Keep the vertical state index in sync with the current free pitch
         VerticalStateIndex = FindNearestVerticalState(TargetPitch);
+
+        PitchSnapBlendTimer = Stats->PitchSnapBlendDuration;
     }
     else
     {
+        // -- Momentum-based snap --------------------------------------------
+        const int32 NearestState = FindNearestVerticalState(TargetPitch);
+        const float NearestPitch = GetPitchForState(NearestState);
+        const float DistToNearest = FMath::Abs(NearestPitch - TargetPitch);
+        const float MomentumMag = FMath::Abs(PitchAngularMomentum);
+
         if (PitchSnapBlendTimer > 0.f)
         {
-            // Still in blend window — smoothly move toward nearest state
             PitchSnapBlendTimer -= DeltaTime;
-            const float StatePitch = GetPitchForState(FindNearestVerticalState(TargetPitch));
-            const float BlendAlpha = FMath::Clamp(
-                1.f - (PitchSnapBlendTimer / Stats->PitchSnapBlendDuration), 0.f, 1.f);
-            TargetPitch = FMath::Lerp(TargetPitch, StatePitch, BlendAlpha * DeltaTime * 10.f);
+
+            // Momentum coefficient: high momentum = carry further, low = snap sooner
+            // Proximity coefficient: near a state = reduce momentum influence
+            const float MomentumCoeff = FMath::Clamp(
+                MomentumMag / FMath::Max(Stats->VerticalHoldAccelRate, 1.f), 0.f, 1.f)
+                * Stats->PitchMomentumInfluence;
+            const float ProximityCoeff = FMath::Clamp(
+                DistToNearest / FMath::Max(Stats->MaxPitchAngle * 0.1f, 1.f), 0.f, 1.f);
+            const float SnapCoeff = 1.f - (MomentumCoeff * ProximityCoeff);
+
+            // Blend: momentum carries pitch, snap pulls toward nearest state
+            const float MomentumContrib = PitchAngularMomentum * DeltaTime;
+            const float SnapContrib = (NearestPitch - TargetPitch) * SnapCoeff * DeltaTime
+                * (1.f / FMath::Max(Stats->PitchSnapBlendDuration, 0.001f));
+
+            TargetPitch += MomentumContrib + SnapContrib;
+            TargetPitch = FMath::Clamp(TargetPitch, -Stats->MaxPitchAngle, Stats->MaxPitchAngle);
+
+            // Drain momentum over blend duration
+            PitchAngularMomentum = FMath::FInterpConstantTo(
+                PitchAngularMomentum, 0.f, DeltaTime,
+                MomentumMag / FMath::Max(Stats->PitchSnapBlendDuration, 0.001f));
         }
         else
         {
-            // Blend done: snap to exact state pitch at normal snap speed
-            const float StatePitch = GetPitchForState(VerticalStateIndex);
+            // Blend done — hard snap to state at normal speed
+            PitchAngularMomentum = 0.f;
+            VerticalStateIndex = NearestState;
             TargetPitch = FMath::FInterpConstantTo(
-                TargetPitch, StatePitch, DeltaTime, Stats->VerticalSnapSpeed);
+                TargetPitch, NearestPitch, DeltaTime, Stats->VerticalSnapSpeed);
         }
     }
 
@@ -295,9 +338,54 @@ void ASubmarinePawn::TickVerticalMovement(float DeltaTime)
     TargetPitch = FMath::Clamp(TargetPitch, -Stats->MaxPitchAngle, Stats->MaxPitchAngle);
     ExternalPitchVelocity = FMath::FInterpTo(ExternalPitchVelocity, 0.f, DeltaTime, Stats->Deceleration_Rotation);
 
-    // Interpolate current pitch toward target pitch
-    CurrentPitch = FMath::FInterpConstantTo(
-        CurrentPitch, TargetPitch, DeltaTime, Stats->VerticalSnapSpeed * 2.f);
+    // -- Accel/decel pitch toward TargetPitch -----------------------------
+    float Delta = TargetPitch - CurrentPitch;
+    const float StopThreshold = 0.1f;
+
+    if (FMath::Abs(Delta) < StopThreshold && FMath::Abs(PitchVelocity) < 1.f)
+    {
+        CurrentPitch = TargetPitch;
+        PitchVelocity = 0.f;
+    }
+    else {
+        float Direction = FMath::Sign(Delta);
+
+        float StoppingDistance = (PitchVelocity * PitchVelocity) / (2.f * FMath::Max(Stats->VerticalDeceleration, 0.001f));
+        float AppliedAcceleration = 0.0f;
+
+        if (FMath::Abs(Delta) > StoppingDistance)
+        {
+            // Acceleration
+            PitchVelocity += Direction * Stats->VerticalAcceleration * DeltaTime;
+            AppliedAcceleration = Stats->VerticalAcceleration;
+        }
+        else
+        {
+            // Deceleration
+            float NewVelocity = PitchVelocity - Direction * Stats->VerticalDeceleration * DeltaTime;
+
+            // Changing sign -> We stop
+            if (FMath::Sign(NewVelocity) != FMath::Sign(PitchVelocity))
+            {
+                PitchVelocity = 0.f;
+            }
+            else
+            {
+                PitchVelocity = NewVelocity;
+            }
+            AppliedAcceleration = Stats->VerticalDeceleration;
+        }
+
+        // Prevents going further than the Target (prevents oscillations)
+        if (FMath::Sign(PitchVelocity) != Direction)
+        {
+            PitchVelocity = 0.f;
+        }
+
+        // Apply movement
+        //CurrentPitch += PitchVelocity * DeltaTime;
+        CurrentPitch = FMath::FInterpConstantTo( CurrentPitch, TargetPitch, DeltaTime, AppliedAcceleration);
+    }
 
     // Apply pitch to actor rotation (this also moves the camera since it's attached)
     FRotator Rot = GetActorRotation();
@@ -313,6 +401,15 @@ void ASubmarinePawn::TickVerticalMovement(float DeltaTime)
         VerticalSpeed *= (1.f + Stats->VerticalBoostWhenLinearStand);
 
     CurrentVerticalSpeed = VerticalSpeed;
+
+    if (PhysicsHandler)
+    {
+        PhysicsHandler->TargetVerticalSpeed = VerticalSpeed;
+        UE_LOG(LogTemp, Warning, TEXT("TargetVerticalSpeed: %.1f CurrentVerticalSpeed: %.1f"),
+            PhysicsHandler->TargetVerticalSpeed, CurrentVerticalSpeed);
+    }
+
+
 }
 
 // -----------------------------------------------------------------------------
@@ -320,17 +417,24 @@ void ASubmarinePawn::TickVerticalMovement(float DeltaTime)
 // -----------------------------------------------------------------------------
 void ASubmarinePawn::TickYawMovement(float DeltaTime)
 {
-    // TargetYawSpeed is set each frame by OnTurn; if no input it will be 0
-    // (ETriggerEvent::Triggered only fires while held)
     const USubmarineCharacteristics* Stats = GetStats();
+
+    // Target yaw speed: MaxYawSpeed in held direction, 0 when released
+    const float TargetYaw = (TurnHeldDirection != 0.f)
+        ? TurnHeldDirection * Stats->MaxYawSpeed
+        : 0.f;
+
+    // Use acceleration when speeding up, deceleration when slowing down
+    const float Rate = (FMath::Abs(TargetYaw) > FMath::Abs(CurrentYawSpeed))
+        ? Stats->YawAcceleration
+        : Stats->YawDeceleration;
+
+    CurrentYawSpeed = FMath::FInterpConstantTo(CurrentYawSpeed, TargetYaw, DeltaTime, Rate);
 
     // External Yaw Speed from collisions
     CurrentYawSpeed += ExternalYawVelocity * DeltaTime;
     ExternalYawVelocity = FMath::FInterpTo(ExternalYawVelocity, 0.f, DeltaTime, Stats->Deceleration_Rotation);
 
-    CurrentYawSpeed = FMath::FInterpTo(CurrentYawSpeed, 0.f, DeltaTime, Stats->YawAcceleration);
-    // Note: the actual target yaw is applied in OnTurn every frame while held.
-    // When released, CurrentYawSpeed decays to 0 here.
 
     FRotator Rot = GetActorRotation();
     Rot.Yaw += CurrentYawSpeed * DeltaTime;
@@ -344,25 +448,67 @@ void ASubmarinePawn::TickFinalMovement(float DeltaTime)
 {
     const USubmarineCharacteristics* Stats = GetStats();
 
-    // Linear movement along the submarine's forward axis (pitch is already baked in)
-    const FVector LinearDelta = GetActorForwardVector() * (CurrentLinearSpeed + ExternalLinearVelocity) * DeltaTime;
+    FVector MoveDelta = FVector::ZeroVector;
 
-    // Vertical movement is purely world Z
-    const FVector VerticalDelta = FVector(0.f, 0.f, (CurrentVerticalSpeed + ExternalVerticalVelocity) * DeltaTime);
+    if (PhysicsHandler)
+    {
+        // Linear: input-driven along forward axis
+        const FVector LinearDelta =
+            GetActorForwardVector() * (CurrentLinearSpeed + ExternalLinearVelocity) * DeltaTime;
 
-    // Decreasing External Linear Velocity (from collisions)
+        // Vertical: blend input-driven and physics (buoyancy/gravity)
+        // Physics gets more weight near the surface, input dominates when submerged
+        const float DepthBlend = FMath::Clamp(
+            PhysicsHandler->CurrentDepth / FMath::Max(Stats->SurfaceTransitionDepth, 1.f),
+            0.f, 1.f);
+        const float PhysicsWeight = (1.f - DepthBlend) * 0.3f; // max 30% physics influence
+
+        const float InputVertical = (CurrentVerticalSpeed + ExternalVerticalVelocity) * DeltaTime;
+        const float PhysicsVertical = PhysicsHandler->PhysicsVelocity.Z * DeltaTime;
+        const float VerticalDelta = FMath::Lerp(InputVertical, PhysicsVertical, PhysicsWeight);
+
+        MoveDelta = LinearDelta + FVector(0.f, 0.f, VerticalDelta);
+    }
+    else
+    {
+        // Fallback: no physics component
+        MoveDelta =
+            GetActorForwardVector() * (CurrentLinearSpeed + ExternalLinearVelocity) * DeltaTime +
+            FVector(0.f, 0.f, (CurrentVerticalSpeed + ExternalVerticalVelocity) * DeltaTime);
+    }
+
     ExternalLinearVelocity = FMath::FInterpTo(ExternalLinearVelocity, 0.f, DeltaTime, Stats->Deceleration_Linear);
     ExternalVerticalVelocity = FMath::FInterpTo(ExternalVerticalVelocity, 0.f, DeltaTime, Stats->Deceleration_Linear);
 
     FHitResult Hit;
-    AddActorWorldOffset(LinearDelta + VerticalDelta, true, &Hit);
+    AddActorWorldOffset(MoveDelta, true, &Hit);
 
-    if (Hit.IsValidBlockingHit())
+    if (Hit.IsValidBlockingHit() && Hit.GetActor())
     {
-        UE_LOG(LogTemp, Warning, TEXT("HIT with: %s"), *Hit.GetActor()->GetName());
-
         if (CollisionHandler)
             CollisionHandler->ProcessHit(Hit, Hit.GetActor());
+
+        // -- Push hit actor if it's another submarine -----------------------
+        ASubmarinePawn* HitSub = Cast<ASubmarinePawn>(Hit.GetActor());
+        if (HitSub)
+        {
+            // Transfer a fraction of our momentum to them
+            const FVector ImpactDir = Hit.ImpactNormal * -1.f; // toward the hit sub
+            const float   TransferMag = FMath::Abs(CurrentLinearSpeed) * 0.4f;
+            const FVector LocalImpact =
+                HitSub->GetActorTransform().InverseTransformVectorNoScale(ImpactDir * TransferMag);
+
+            HitSub->SetExternalLinearVelocity(
+                HitSub->GetExternalLinearVelocity() + LocalImpact.X);
+            HitSub->SetExternalVerticalVelocity(
+                HitSub->GetExternalVerticalVelocity() + LocalImpact.Z);
+            HitSub->SetExternalYawVelocity(
+                HitSub->GetExternalYawVelocity() + LocalImpact.Y * 0.3f);
+
+            // Also notify their collision handler for health/state effects
+            if (HitSub->CollisionHandler)
+                HitSub->CollisionHandler->ProcessHit(Hit, this);
+        }
     }
 }
 
@@ -379,6 +525,7 @@ void ASubmarinePawn::ActivateCamera(ESubmarineCameraState NewState)
 
 void ASubmarinePawn::TickCameraSwitch(float DeltaTime)
 {
+    // Camera Switch for holding the button
     const USubmarineCharacteristics* Stats = GetStats();
     const float HoldDuration = Stats->CameraSwitchHoldDuration;
 
@@ -386,14 +533,15 @@ void ASubmarinePawn::TickCameraSwitch(float DeltaTime)
     if (bPeriscopeHeld)
     {
         PeriscopeHoldTimer += DeltaTime;
-        if (PeriscopeHoldTimer >= HoldDuration)
+        if (PeriscopeHoldTimer >= HoldDuration && !bPeriscopeHoldFired)
         {
             if (CameraState == ESubmarineCameraState::POV)
                 ActivateCamera(ESubmarineCameraState::Periscope);
             else if (CameraState == ESubmarineCameraState::Periscope)
                 ActivateCamera(ESubmarineCameraState::POV);
-            bPeriscopeHeld = false;
-            PeriscopeHoldTimer = 0.f;
+            //PeriscopeHoldTimer = 0.f;
+            //bPeriscopeHoldFired = true;
+            PeriscopeHoldTimer -= HoldDuration;
         }
     }
 
@@ -401,14 +549,15 @@ void ASubmarinePawn::TickCameraSwitch(float DeltaTime)
     if (bThirdPersonHeld && Stats->bEnable3rdPersonCamera)
     {
         ThirdPersonHoldTimer += DeltaTime;
-        if (ThirdPersonHoldTimer >= HoldDuration)
+        if (ThirdPersonHoldTimer >= HoldDuration && !bThirdPersonHoldFired)
         {
             if (CameraState == ESubmarineCameraState::POV)
                 ActivateCamera(ESubmarineCameraState::ThirdPerson);
             else if (CameraState == ESubmarineCameraState::ThirdPerson)
                 ActivateCamera(ESubmarineCameraState::POV);
-            bThirdPersonHeld = false;
-            ThirdPersonHoldTimer = 0.f;
+            //ThirdPersonHoldTimer = 0.f;
+            //bThirdPersonHoldFired = true;
+            ThirdPersonHoldTimer -= HoldDuration;
         }
     }
 }
@@ -469,11 +618,15 @@ float ASubmarinePawn::GetPitchForState(int32 StateIdx) const
 
 int32 ASubmarinePawn::FindNearestVerticalState(float Pitch) const
 {
+    const USubmarineCharacteristics* Stats = GetStats();
     int32 BestIndex = SafeVerticalStateCount / 2;
     float BestDistance = FLT_MAX;
 
     for (int32 i = 0; i < SafeVerticalStateCount; ++i)
     {
+        // Skip ghost states — they are never snapped to
+        if (Stats && Stats->IsGhostState(i)) continue;
+
         const float Dist = FMath::Abs(GetPitchForState(i) - Pitch);
         if (Dist < BestDistance)
         {
@@ -528,62 +681,136 @@ void ASubmarinePawn::OnMoveRight(const FInputActionValue& Value)
     AddMovementInput(GetActorRightVector() * Axis);
 }
 
-void ASubmarinePawn::OnMoveUpTriggered(const FInputActionValue& Value)
+void ASubmarinePawn::UpdateVerticalInput()
 {
-    const float Axis = Value.Get<float>();
+    if (VerticalHeldDirection == 1.f && !bUpPressed)
+    {
+        if (bDownPressed)
+        {
+            VerticalHeldDirection = -1.f;
+            VerticalHoldTime = 0.f;
+        }
+        else
+        {
+            VerticalHeldDirection = 0.f;
+            bVerticalHeld = false;
+        }
+    }
+    else if (VerticalHeldDirection == -1.f && !bDownPressed)
+    {
+        if (bUpPressed)
+        {
+            VerticalHeldDirection = 1.f;
+            VerticalHoldTime = 0.f;
+        }
+        else
+        {
+            VerticalHeldDirection = 0.f;
+            bVerticalHeld = false;
+        }
+    }
+    else if (VerticalHeldDirection == 0.f)
+    {
+        if (bUpPressed)
+        {
+            VerticalHeldDirection = 1.f;
+            bVerticalHeld = true;
+            VerticalHoldTime = 0.f;
+        }
+        else if (bDownPressed)
+        {
+            VerticalHeldDirection = -1.f;
+            bVerticalHeld = true;
+            VerticalHoldTime = 0.f;
+        }
+    }
 
-    if (!bVerticalHeld)
+    VerticalAxisValue = VerticalHeldDirection;
+}
+
+void ASubmarinePawn::OnMoveUpPressed(const FInputActionValue&)
+{
+    bUpPressed = true;
+    UpdateVerticalInput();
+}
+
+void ASubmarinePawn::OnMoveDownPressed(const FInputActionValue&)
+{
+    bDownPressed = true;
+    UpdateVerticalInput();
+}
+
+void ASubmarinePawn::OnMoveUpReleased(const FInputActionValue&)
+{
+    bUpPressed = false;
+    UpdateVerticalInput();
+}
+
+void ASubmarinePawn::OnMoveDownReleased(const FInputActionValue&)
+{
+    bDownPressed = false;
+    UpdateVerticalInput();
+}
+
+void ASubmarinePawn::UpdateTurnInput()
+{
+    if (TurnHeldDirection == 1.f && !bRightPressed)
     {
-        // First press — start fresh
-        bVerticalHeld = true;
-        VerticalHoldTime = 0.f;
-        VerticalAxisValue = Axis;
-        VerticalHeldDirection = Axis;
+        if (bLeftPressed)
+        {
+            TurnHeldDirection = -1.f;
+        }
+        else
+        {
+            TurnHeldDirection = 0.f;
+        }
     }
-    else if (FMath::Sign(Axis) != FMath::Sign(VerticalHeldDirection))
+    else if (TurnHeldDirection == -1.f && !bLeftPressed)
     {
-        // Opposite direction pressed while held — ignore (first-held wins)
-        // Do nothing: VerticalAxisValue stays as the original direction
-        return;
+        if (bRightPressed)
+        {
+            TurnHeldDirection = 1.f;
+        }
+        else
+        {
+            TurnHeldDirection = 0.f;
+        }
     }
-    else
+    else if (TurnHeldDirection == 0.f)
     {
-        VerticalAxisValue = Axis;
+        if (bRightPressed)
+        {
+            TurnHeldDirection = 1.f;
+        }
+        else if (bLeftPressed)
+        {
+            TurnHeldDirection = -1.f;
+        }
     }
 }
 
-void ASubmarinePawn::OnMoveUpCompleted(const FInputActionValue& Value)
+void ASubmarinePawn::OnTurnRightPressed(const FInputActionValue&)
 {
-    bVerticalHeld = false;
-    VerticalHoldTime = 0.f;
-    VerticalAxisValue = 0.f;
-    VerticalHeldDirection = 0.f;
-    // FindNearestVerticalState will be called next tick during snap blend
-    VerticalStateIndex = FindNearestVerticalState(TargetPitch);
+    bRightPressed = true;
+    UpdateTurnInput();
 }
 
-void ASubmarinePawn::OnTurnTriggered(const FInputActionValue& Value)
+void ASubmarinePawn::OnTurnLeftPressed(const FInputActionValue&)
 {
-    const float Axis = Value.Get<float>();
-
-    if (TurnHeldDirection == 0.f)
-    {
-        // No turn currently held — accept this input
-        TurnHeldDirection = FMath::Sign(Axis);
-        CurrentYawSpeed = Axis * GetStats()->MaxYawSpeed;
-    }
-    else if (FMath::Sign(Axis) == FMath::Sign(TurnHeldDirection))
-    {
-        // Same direction — update normally
-        CurrentYawSpeed = Axis * GetStats()->MaxYawSpeed;
-    }
-    // Opposite direction while held — ignored (first-held wins)
+    bLeftPressed = true;
+    UpdateTurnInput();
 }
 
-void ASubmarinePawn::OnTurnCompleted(const FInputActionValue& Value)
+void ASubmarinePawn::OnTurnRightReleased(const FInputActionValue&)
 {
-    TurnHeldDirection = 0.f;
-    // CurrentYawSpeed decays to 0 naturally via FInterpTo in TickYawMovement
+    bRightPressed = false;
+    UpdateTurnInput();
+}
+
+void ASubmarinePawn::OnTurnLeftReleased(const FInputActionValue&)
+{
+    bLeftPressed = false;
+    UpdateTurnInput();
 }
 
 void ASubmarinePawn::OnMouseX(const FInputActionValue& Value)
@@ -628,31 +855,59 @@ void ASubmarinePawn::OnScrollZoom(const FInputActionValue& Value)
         Stats->ThirdPersonMaxRadius);
 }
 
+// Camera periscope — tap on Started, hold fires in Tick
+void ASubmarinePawn::OnCameraPeriscopeStarted(const FInputActionValue& Value)
+{
+    if (CameraState == ESubmarineCameraState::ThirdPerson) return;
+    // Tap: switch immediately
+    if (CameraState == ESubmarineCameraState::POV)
+        ActivateCamera(ESubmarineCameraState::Periscope);
+    else if (CameraState == ESubmarineCameraState::Periscope)
+        ActivateCamera(ESubmarineCameraState::POV);
+
+    // Begin tracking hold
+    bPeriscopeHeld = true;
+    PeriscopeHoldTimer = 0.f;
+    bPeriscopeHoldFired = false;
+}
+
 void ASubmarinePawn::OnCameraPeriscopeTriggered(const FInputActionValue& Value)
 {
-    // Only allowed from POV or Periscope — not from 3rd person
-    if (CameraState == ESubmarineCameraState::ThirdPerson) return;
-    bPeriscopeHeld = true;
+    // Hold handled in TickCameraSwitch
 }
 
 void ASubmarinePawn::OnCameraPeriscopeCompleted(const FInputActionValue& Value)
 {
     bPeriscopeHeld = false;
     PeriscopeHoldTimer = 0.f;
+    bPeriscopeHoldFired = false;
+}
+
+void ASubmarinePawn::OnCamera3rdPersonStarted(const FInputActionValue& Value)
+{
+    if (!GetStats()->bEnable3rdPersonCamera) return;
+    if (CameraState == ESubmarineCameraState::Periscope) return;
+    // Tap: switch immediately
+    if (CameraState == ESubmarineCameraState::POV)
+        ActivateCamera(ESubmarineCameraState::ThirdPerson);
+    else if (CameraState == ESubmarineCameraState::ThirdPerson)
+        ActivateCamera(ESubmarineCameraState::POV);
+
+    bThirdPersonHeld = true;
+    ThirdPersonHoldTimer = 0.f;
+    bThirdPersonHoldFired = false;
 }
 
 void ASubmarinePawn::OnCamera3rdPersonTriggered(const FInputActionValue& Value)
 {
-    if (!GetStats()->bEnable3rdPersonCamera) return;
-    // Only allowed from POV or ThirdPerson — not from Periscope
-    if (CameraState == ESubmarineCameraState::Periscope) return;
-    bThirdPersonHeld = true;
+    // Hold handled in TickCameraSwitch
 }
 
 void ASubmarinePawn::OnCamera3rdPersonCompleted(const FInputActionValue& Value)
 {
     bThirdPersonHeld = false;
     ThirdPersonHoldTimer = 0.f;
+    bThirdPersonHoldFired = false;
 }
 
 // -----------------------------------------------------------------------------
@@ -668,4 +923,69 @@ void ASubmarinePawn::OnOverlapBegin(UPrimitiveComponent* OverlappedComp, AActor*
     UE_LOG(LogTemp, Warning, TEXT("OVERLAP! Other: %s"), *OtherActor->GetName());
     if (CollisionHandler)
         CollisionHandler->ProcessHit(SweepResult, OtherActor);
+}
+
+void ASubmarinePawn::OnOverlapEnd(UPrimitiveComponent* OverlappedComp, AActor* OtherActor,
+    UPrimitiveComponent* OtherComp, int32 OtherBodyIndex)
+{
+    if (!OtherActor) return;
+    TWeakObjectPtr<AActor> WeakOther(OtherActor);
+    OverlapDurations.Remove(WeakOther);
+}
+
+// -----------------------------------------------------------------------------
+//  Anti-stuck system
+// -----------------------------------------------------------------------------
+void ASubmarinePawn::TickAntiStuck(float DeltaTime)
+{
+    const USubmarineCharacteristics* Stats = GetStats();
+    if (!Stats) return;
+
+    TArray<TWeakObjectPtr<AActor>> ToRemove;
+
+    for (auto& Pair : OverlapDurations)
+    {
+        TWeakObjectPtr<AActor> WeakOther = Pair.Key;
+        if (!WeakOther.IsValid())
+        {
+            ToRemove.Add(WeakOther);
+            continue;
+        }
+
+        Pair.Value += DeltaTime;
+
+        if (Pair.Value >= Stats->AntiStuckThreshold)
+        {
+            // Direction: away from the other actor's center
+            FVector ExpulsionDir = GetActorLocation() - WeakOther->GetActorLocation();
+            if (ExpulsionDir.IsNearlyZero())
+                ExpulsionDir = FVector::UpVector;
+            else
+                ExpulsionDir.Normalize();
+
+            const FVector Impulse = ExpulsionDir * Stats->AntiStuckForce;
+
+            UE_LOG(LogTemp, Warning,
+                TEXT("[AntiStuck] Expelling from %s force=%.0f"),
+                *WeakOther->GetName(), Stats->AntiStuckForce);
+
+            // Apply to our movement
+            SetExternalLinearVelocity(GetExternalLinearVelocity() +
+                FVector::DotProduct(Impulse, GetActorForwardVector()));
+            SetExternalVerticalVelocity(GetExternalVerticalVelocity() + Impulse.Z);
+
+            // Push other submarine away too if it has physics
+            if (USubmarinePhysicsComponent* OtherPhysics =
+                WeakOther->FindComponentByClass<USubmarinePhysicsComponent>())
+            {
+                OtherPhysics->AddImpulse(-Impulse);
+            }
+
+            // Reset by cooldown so it fires again if still stuck
+            Pair.Value -= Stats->AntiStuckCooldown;
+        }
+    }
+
+    for (auto& Dead : ToRemove)
+        OverlapDurations.Remove(Dead);
 }

@@ -70,7 +70,7 @@ struct FCollisionBounceEntry
      */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Collision",
         meta = (ClampMin = "0", ClampMax = "6"))
-    int32 SpeedStatePenalty = 1;
+    int32 SpeedStatePenalty = 0;
 };
 
 // ---------------------------------------------
@@ -148,6 +148,17 @@ public:
         meta = (ClampMin = "3"))
     int32 VerticalStateCount = 11;
 
+    /**
+     * Number of states around Stand (center) that are SKIPPED (ghost states).
+     * Must be even. If odd, +1 is added. Max = VerticalStateCount - 3.
+     * These angles exist mathematically but are never snapped to.
+     * Example: VerticalStateCount=21, GhostVerticalStateCount=2 skips
+     * the two states closest to 0° (the deadzone near horizontal).
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Vertical Movement",
+        meta = (ClampMin = "0"))
+    int32 GhostVerticalStateCount = 1;
+
     /** Maximum pitch angle in degrees (both up and down) */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Vertical Movement",
         meta = (ClampMin = "1.0", ClampMax = "89.0"))
@@ -173,7 +184,15 @@ public:
 
     /** How fast the pitch snaps to the nearest angle state when no key is held (degrees/s) */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Vertical Movement")
-    float VerticalSnapSpeed = 40.f;
+    float VerticalSnapSpeed = 20.f;
+
+    /** Acceleration when actively pitching up/down (degrees/s²) */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Vertical Movement")
+    float VerticalAcceleration = 800.f;
+
+    /** Deceleration when releasing vertical input (degrees/s²) */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Vertical Movement")
+    float VerticalDeceleration = 1200.f;
 
     /**
      * Duration in seconds of the smooth blend when snapping to nearest pitch state.
@@ -183,15 +202,27 @@ public:
         meta = (ClampMin = "0.0"))
     float PitchSnapBlendDuration = 0.12f;
 
+    /**
+     * How much accumulated angular momentum influences the snap target.
+     * Higher = momentum carries further before snapping to nearest state.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Vertical Movement",
+        meta = (ClampMin = "0.0", ClampMax = "1.0"))
+    float PitchMomentumInfluence = 0.4f;
+
     // -- Yaw (turning) ---------------------------
 
     /** Maximum yaw rotation speed (degrees/s) */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Yaw")
     float MaxYawSpeed = 50.f;
 
-    /** Interpolation speed for yaw (how snappy the turn feels) */
+    /** How fast yaw accelerates when turning key is held (degrees/s²) */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Yaw")
-    float YawAcceleration = 5.f;
+    float YawAcceleration = 50.f;
+
+    /** How fast yaw decelerates when turning key is released (degrees/s²) */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Yaw")
+    float YawDeceleration = 30.f;
 
     // -- Speed boost cross-effects ---------------
 
@@ -260,9 +291,114 @@ public:
         meta = (ClampMin = "0.0", ClampMax = "1.0"))
     float DefaultMult = 0.2f;
 
+    // -- Anti-stuck ------------------------------
+
+    /** Seconds of continuous overlap before the expulsion force fires */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Collision|AntiStuck",
+        meta = (ClampMin = "0.06"))
+    float AntiStuckThreshold = 0.3f;
+
+    /** Expulsion impulse magnitude (cm/s) away from penetrating object */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Collision|AntiStuck")
+    float AntiStuckForce = 3000.f;
+
+    /** Cooldown (seconds) between anti-stuck firings against the same actor */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Collision|AntiStuck",
+        meta = (ClampMin = "0.06"))
+    float AntiStuckCooldown = 0.15f;
+
+    // -- Physics: General ----------------------
+
+    /** Gravity acceleration (cm/s²) — positive value, applied downward */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Physics|General")
+    float GravityAcceleration = 980.f;
+
+    /** Safety clamp on total physics velocity magnitude (cm/s) */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Physics|General")
+    float PhysicsMaxSpeed = 5000.f;
+
+    /** Max thrust force the engines can apply (cm/s²) */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Physics|General")
+    float MaxThrustForce = 3000.f;
+
+    // -- Physics: Buoyancy ---------------------
+
+    /**
+     * Ratio of buoyancy to gravity at full submersion.
+     * 1.0 = perfectly neutral, <1.0 = slowly sinks, >1.0 = rises.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Physics|Buoyancy",
+        meta = (ClampMin = "0.0"))
+    float BuoyancyRatio = 1.0f;
+
+    /** World Z coordinate of the water surface (cm) */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Physics|Buoyancy")
+    float WaterSurfaceZ = 0.f;
+
+    /**
+     * Depth range over which buoyancy transitions from 0 to full (cm).
+     * Models partial submersion near the surface.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Physics|Buoyancy",
+        meta = (ClampMin = "1.0"))
+    float SurfaceTransitionDepth = 200.f;
+
+    // -- Physics: Drag -------------------------
+
+    /**
+     * If true, uses the full 6DOF drag tensor (different per axis).
+     * If false, uses simple scalar drag.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Physics|Drag")
+    bool bUseComplexDrag = false;
+
+    /** Simple drag: scalar coefficient (F = -Cd * v²) */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Physics|Drag",
+        meta = (ClampMin = "0.0", EditCondition = "!bUseComplexDrag"))
+    float SimpleDragCoefficient = 0.001f;
+
+    /**
+     * Complex drag tensor coefficients (X=forward, Y=lateral, Z=vertical).
+     * Forward drag is low (streamlined hull), lateral/vertical much higher.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Physics|Drag",
+        meta = (EditCondition = "bUseComplexDrag"))
+    FVector DragTensor = FVector(0.0005f, 0.005f, 0.003f);
+
+    // -- Physics: Depth Pressure ---------------
+
+    /** Enable depth pressure effects */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Physics|Depth")
+    bool bEnableDepthPhysics = false;
+
+    /**
+     * Global influence multiplier for all depth pressure effects.
+     * 0 = no effect, 1 = full effect.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Physics|Depth",
+        meta = (ClampMin = "0.0", ClampMax = "1.0",
+            EditCondition = "bEnableDepthPhysics"))
+    float DepthPhysicsInfluence = 1.0f;
+
+    /**
+     * Depth (cm below surface) at which pressure effects begin.
+     * Above this depth, no pressure penalty.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Physics|Depth",
+        meta = (ClampMin = "0.0", EditCondition = "bEnableDepthPhysics"))
+    float PressureDepthThreshold = 5000.f;
+
+    /**
+     * Rate at which pressure increases per cm of depth beyond threshold.
+     * Also attenuates buoyancy at depth.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Physics|Depth",
+        meta = (ClampMin = "0.0", EditCondition = "bEnableDepthPhysics"))
+    float DepthPressureCoefficient = 0.00001f;
+
     // -- Camera (POV) -----------------------------
 
-    /** Hold duration in seconds to trigger camera switch to Periscope (P key) */
+    /** Hold duration in seconds to trigger camera switch */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera|Switching")
     float CameraSwitchHoldDuration = 0.3f;
 
@@ -349,6 +485,17 @@ public:
      */
     UFUNCTION(BlueprintCallable, Category = "Submarine|Vertical")
     float GetPitchForVerticalState(int32 StateIndex) const;
+
+    /** Returns sanitised ghost state count (even, clamped to VerticalStateCount-3) */
+    UFUNCTION(BlueprintCallable, Category = "Submarine|Vertical")
+    int32 GetSafeGhostStateCount() const;
+
+    /**
+     * Returns whether a given state index is a ghost (skipped) state.
+     * Ghost states are the ones immediately surrounding the center (Stand).
+     */
+    UFUNCTION(BlueprintCallable, Category = "Submarine|Vertical")
+    bool IsGhostState(int32 StateIndex) const;
 
     /**
      * Returns the bounce entry for a given collision type.
