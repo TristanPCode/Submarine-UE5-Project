@@ -31,28 +31,20 @@ void USubmarinePhysicsComponent::TickComponent(float DeltaTime, ELevelTick TickT
     const USubmarineCharacteristics* Stats = GetStats();
     if (!Stats) return;
 
-    // -- Update depth state ------------------------------------------------
+    // Update depth
     const float WaterZ = GetWaterSurfaceZ();
-    const float OwnerZ = Owner->GetActorLocation().Z;
-    CurrentDepth = WaterZ - OwnerZ; // positive = submerged, negative = above
+    CurrentDepth = WaterZ - Owner->GetActorLocation().Z;
     bAboveSurface = (CurrentDepth < 0.f);
 
-    // -- Gather forces (world space, cm/s²) --------------------------------
-    FVector TotalForce = FVector::ZeroVector;
+    // Compute each force separately for logging
+    const FVector GravForce = ComputeGravityForce();
+    const FVector BuoyForce = ComputeBuoyancyForce();
+    const FVector DragForce = ComputeDragForce();
+    const FVector DepthForce = Stats->bEnableDepthPhysics ? ComputeDepthPressureForce() : FVector::ZeroVector;
+    const FVector ThrustForce = ComputeThrustForce(Owner->GetActorForwardVector());
 
-    TotalForce += ComputeGravityForce();
-    TotalForce += ComputeBuoyancyForce();
-    TotalForce += ComputeDragForce();
-
-    if (Stats->bEnableDepthPhysics)
-        TotalForce += ComputeDepthPressureForce();
-
-    // Thrust — PD controller pushing toward target speeds
-    const FVector Forward = Owner->GetActorForwardVector();
-    const FVector Up = FVector::UpVector; // vertical thrust always world up
-    TotalForce += ComputeThrustForce(Forward, Up);
-
-    // External accumulated forces (e.g. from collisions via AddForce)
+    // Accumulate forces
+    FVector TotalForce = GravForce + BuoyForce + DragForce + DepthForce + ThrustForce;
     TotalForce += AccumulatedForces;
     AccumulatedForces = FVector::ZeroVector;
 
@@ -62,14 +54,32 @@ void USubmarinePhysicsComponent::TickComponent(float DeltaTime, ELevelTick TickT
     if (LogTimer >= 2.f)
     {
         LogTimer = 0.f;
-        UE_LOG(LogTemp, Warning,
-            TEXT("[Physics] Depth=%.0f Gravity=%.1f Buoyancy=%.1f TotalZ=%.1f PhysVelZ=%.1f Above=%d"),
-            CurrentDepth,
-            ComputeGravityForce().Z,
-            ComputeBuoyancyForce().Z,
-            TotalForce.Z,
-            PhysicsVelocity.Z,
-            bAboveSurface ? 1 : 0);
+        UE_LOG(LogTemp, Warning, TEXT("========= [PhysicsComponent] ========="));
+        UE_LOG(LogTemp, Warning, TEXT("  DA ptr valid   : %s"),
+            Characteristics ? TEXT("YES") : TEXT("NO - using CDO defaults!"));
+        UE_LOG(LogTemp, Warning, TEXT("  WaterSurfaceZ  : %.1f  (from DA: %.1f)"),
+            WaterZ, Stats->WaterSurfaceZ);
+        UE_LOG(LogTemp, Warning, TEXT("  SubmarineZ     : %.1f"), Owner->GetActorLocation().Z);
+        UE_LOG(LogTemp, Warning, TEXT("  CurrentDepth   : %.1f  (%s)"),
+            CurrentDepth, bAboveSurface ? TEXT("ABOVE water") : TEXT("SUBMERGED"));
+        UE_LOG(LogTemp, Warning, TEXT("  --- Forces (Z axis) ---"));
+        UE_LOG(LogTemp, Warning, TEXT("  Gravity        : %.2f  (DA GravityAccel=%.1f)"),
+            GravForce.Z, Stats->GravityAcceleration);
+        UE_LOG(LogTemp, Warning, TEXT("  Buoyancy       : %.2f  (DA BuoyancyRatio=%.2f, SubmersionFactor=%.2f)"),
+            BuoyForce.Z, Stats->BuoyancyRatio,
+            bAboveSurface ? 0.f : FMath::Clamp(CurrentDepth / FMath::Max(Stats->SurfaceTransitionDepth, 1.f), 0.f, 1.f));
+        UE_LOG(LogTemp, Warning, TEXT("  Drag Z         : %.2f  (ComplexDrag=%s)"),
+            DragForce.Z, Stats->bUseComplexDrag ? TEXT("ON") : TEXT("OFF"));
+        UE_LOG(LogTemp, Warning, TEXT("  DepthPressure  : %.2f  (Enabled=%s)"),
+            DepthForce.Z, Stats->bEnableDepthPhysics ? TEXT("ON") : TEXT("OFF"));
+        UE_LOG(LogTemp, Warning, TEXT("  ThrustZ        : %.2f  (TargetLinear=%.1f)"),
+            ThrustForce.Z, TargetLinearSpeed);
+        UE_LOG(LogTemp, Warning, TEXT("  --- Result ---"));
+        UE_LOG(LogTemp, Warning, TEXT("  TotalForce Z   : %.2f"), TotalForce.Z);
+        UE_LOG(LogTemp, Warning, TEXT("  PhysVelocity Z : %.2f"), PhysicsVelocity.Z);
+        UE_LOG(LogTemp, Warning, TEXT("  PhysVelocity   : (%.1f, %.1f, %.1f)"),
+            PhysicsVelocity.X, PhysicsVelocity.Y, PhysicsVelocity.Z);
+        UE_LOG(LogTemp, Warning, TEXT("======================================"));
     }
 
     // -- Integrate forces -> velocity ---------------------------------------
@@ -136,11 +146,11 @@ FVector USubmarinePhysicsComponent::ComputeBuoyancyForce() const
 
     // Depth pressure attenuation
     float PressureAttenuation = 1.f;
-    if (Stats->bEnableDepthPhysics && Stats->DepthPressureCoefficient > 0.f)
+    if (Stats->bEnableDepthPhysics && Stats->BuoyancyDepthNerfCoefficient > 0.f)
     {
         // Pressure increases with depth, reducing buoyancy efficiency
         PressureAttenuation = FMath::Max(0.f,
-            1.f - (CurrentDepth * Stats->DepthPressureCoefficient));
+            1.f - (CurrentDepth * Stats->BuoyancyDepthNerfCoefficient));
     }
 
     const float BuoyancyAccel =
@@ -173,7 +183,8 @@ FVector USubmarinePhysicsComponent::ComputeDragForceSimple() const
 
     const float Speed = PhysicsVelocity.Size();
     const float DragForce = Stats->SimpleDragCoefficient * Speed * Speed;
-    return -PhysicsVelocity.GetSafeNormal() * DragForce;
+    //return -PhysicsVelocity.GetSafeNormal() * DragForce;
+    return -PhysicsVelocity * Stats->SimpleDragCoefficient;
 }
 
 // -----------------------------------------------------------------------------
@@ -235,30 +246,24 @@ FVector USubmarinePhysicsComponent::ComputeDepthPressureForce() const
 //  F_thrust = Kp * (target - current) — proportional term only
 //  (derivative term is implicit via drag opposing overshoot)
 // -----------------------------------------------------------------------------
-FVector USubmarinePhysicsComponent::ComputeThrustForce(const FVector& OwnerForward,
-    const FVector& OwnerUp) const
+FVector USubmarinePhysicsComponent::ComputeThrustForce(const FVector& OwnerForward) const
 {
     const USubmarineCharacteristics* Stats = GetStats();
     if (!Stats) return FVector::ZeroVector;
 
-    // Current speed along each controlled axis
+    // Only drive linear (forward/backward) speed via thrust
     const float CurrentLinear = FVector::DotProduct(PhysicsVelocity, OwnerForward);
-    const float CurrentVertical = PhysicsVelocity.Z;
-
-    // Error terms
     const float LinearError = TargetLinearSpeed - CurrentLinear;
-    const float VerticalError = TargetVerticalSpeed - CurrentVertical;
 
-    // Proportional gain — use acceleration/deceleration from DA
-    const float LinearGain = (LinearError >= 0.f) ? Stats->LinearAcceleration : Stats->LinearDeceleration;
-    const float VerticalGain = (VerticalError >= 0.f) ? Stats->VerticalAcceleration : Stats->VerticalDeceleration;
+    const float LinearGain = (LinearError >= 0.f)
+        ? Stats->LinearAcceleration
+        : Stats->LinearDeceleration;
 
-    const FVector LinearThrust = OwnerForward * FMath::Clamp(LinearError * LinearGain,
-        -Stats->MaxThrustForce, Stats->MaxThrustForce);
-    const FVector VerticalThrust = FVector::UpVector * FMath::Clamp(VerticalError * VerticalGain,
-        -Stats->MaxThrustForce, Stats->MaxThrustForce);
+    const FVector LinearThrust =
+        OwnerForward * FMath::Clamp(LinearError * LinearGain,
+            -Stats->MaxThrustForce, Stats->MaxThrustForce);
 
-    return LinearThrust + VerticalThrust;
+    return LinearThrust;
 }
 
 // -----------------------------------------------------------------------------

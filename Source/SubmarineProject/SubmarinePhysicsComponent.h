@@ -101,7 +101,7 @@ private:
     FVector ComputeDragForceSimple() const;
     FVector ComputeDragForceTensor() const;
     FVector ComputeDepthPressureForce() const;
-    FVector ComputeThrustForce(const FVector& OwnerForward, const FVector& OwnerUp) const;
+    FVector ComputeThrustForce(const FVector& OwnerForward) const;
 
     float GetWaterSurfaceZ() const;
 

@@ -177,7 +177,24 @@ private:
         meta = (AllowPrivateAccess = "true"))
     TObjectPtr<USubmarinePhysicsComponent> PhysicsHandler;
 
-    // -- Overlap & anti-stuck collision -------------------------------------
+    // -- Overlap, Collision & Anti-stuck collision -------------------------------------
+
+    struct FHitTracker
+    {
+        /** World time when this actor was first hit in the current continuous sequence */
+        float FirstHitTime = 0.f;
+        /** World time of the most recent hit against this actor */
+        float LastHitTime = 0.f;
+        /** World time when expulsion last fired against this actor */
+        float LastExpulsionTime = -999.f;
+        /** Accumulated impact normals for escape direction */
+        FVector NormalSum = FVector::ZeroVector;
+        int32   NormalCount = 0;
+    };
+
+    /** Per-actor hit tracking for anti-stuck system */
+    TMap<AActor*, FHitTracker> HitTrackers;
+
     UFUNCTION()
     void OnOverlapBegin(UPrimitiveComponent* OverlappedComp, AActor* OtherActor,
         UPrimitiveComponent* OtherComp, int32 OtherBodyIndex,
@@ -187,10 +204,18 @@ private:
     void OnOverlapEnd(UPrimitiveComponent* OverlappedComp, AActor* OtherActor,
         UPrimitiveComponent* OtherComp, int32 OtherBodyIndex);
 
-    /** Tracks how long we have been overlapping each actor (seconds) */
-    TMap<TWeakObjectPtr<AActor>, float> OverlapDurations;
+    UFUNCTION(BlueprintCallable, Category = "Submarine|Collision")
+    void HandleHitFromBlueprint(const FHitResult& Hit);
 
+    void RegisterHit(AActor* OtherActor, const FHitResult& Hit);
     void TickAntiStuck(float DeltaTime);
+
+    /**
+     * Call this from the Blueprint Event Hit to feed the anti-stuck system.
+     * Drag the 'Hit' pin from Event Hit directly into this function.
+     */
+    UFUNCTION(BlueprintCallable, Category = "Submarine|Collision")
+    void RegisterHitFromBlueprint(const FHitResult& Hit);
 
     // -- Linear state machine internals -------------------------------------
 

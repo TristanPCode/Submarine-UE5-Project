@@ -4,30 +4,37 @@
 
 USubmarineCharacteristics::USubmarineCharacteristics()
 {
-    // Populate default linear speed table
-    LinearSpeedTable = {
-        { ELinearSpeedState::BackwardMAX, -2000.f },
-        { ELinearSpeedState::BackwardMED, -1200.f },
-        { ELinearSpeedState::BackwardMIN,  -500.f },
-        { ELinearSpeedState::Stand,           0.f },
-        { ELinearSpeedState::ForwardMIN,    500.f },
-        { ELinearSpeedState::ForwardMED,   1200.f },
-        { ELinearSpeedState::ForwardMAX,   2000.f },
-    };
+}
 
-    // Populate default collision bounce table
-    // Landscape: softer bounce, loses 1 state
-    CollisionBounceTable.Add({ ESubmarineCollisionType::Landscape,      400.f, 0.3f, 0.1f, 1 });
-    // Static obstacles: medium bounce, loses 2 states
-    CollisionBounceTable.Add({ ESubmarineCollisionType::StaticObstacle, 800.f, 0.5f, 0.2f, 2 });
-    // Other submarines: strong bounce, loses 2 states
-    CollisionBounceTable.Add({ ESubmarineCollisionType::OtherSubmarine, 900.f, 0.5f, 0.2f, 2 });
-    // Torpedo: force only (damage handled by health system), loses 1 state
-    CollisionBounceTable.Add({ ESubmarineCollisionType::Torpedo,        600.f, 0.4f, 0.1f, 1 });
-    // Trigger zones: no bounce at all
-    CollisionBounceTable.Add({ ESubmarineCollisionType::TriggerZone,      0.f, 0.0f, 0.0f, 0 });
-    // Default fallback
-    CollisionBounceTable.Add({ ESubmarineCollisionType::Default,        500.f, 0.0f, 0.0f, 0 });
+// -----------------------------------------------------------------------------
+
+void USubmarineCharacteristics::PostInitProperties()
+{
+    Super::PostInitProperties();
+
+    // Remplir uniquement si vide (important pour ne pas écraser les DataAssets)
+    if (LinearSpeedTable.Num() == 0)
+    {
+        LinearSpeedTable = {
+            { ELinearSpeedState::BackwardMAX, -2000.f },
+            { ELinearSpeedState::BackwardMED, -1200.f },
+            { ELinearSpeedState::BackwardMIN,  -500.f },
+            { ELinearSpeedState::Stand,           0.f },
+            { ELinearSpeedState::ForwardMIN,    500.f },
+            { ELinearSpeedState::ForwardMED,   1200.f },
+            { ELinearSpeedState::ForwardMAX,   2000.f },
+        };
+    }
+
+    if (CollisionBounceTable.Num() == 0)
+    {
+        CollisionBounceTable.Add({ ESubmarineCollisionType::Landscape,      400.f, 0.3f, false, 0.3f, 0.3f, 0.1f, 1 });
+        CollisionBounceTable.Add({ ESubmarineCollisionType::StaticObstacle, 800.f, 0.5f, false, 0.5f, 0.5f, 0.2f, 2 });
+        CollisionBounceTable.Add({ ESubmarineCollisionType::OtherSubmarine, 900.f, 0.5f, false, 0.5f, 0.5f, 0.2f, 2 });
+        CollisionBounceTable.Add({ ESubmarineCollisionType::Torpedo,        600.f, 0.4f, false, 0.4f, 0.4f, 0.1f, 1 });
+        CollisionBounceTable.Add({ ESubmarineCollisionType::TriggerZone,      0.f, 0.0f, false, 0.0f, 0.0f, 0.0f, 0 });
+        CollisionBounceTable.Add({ ESubmarineCollisionType::Default,        500.f, 0.0f, false, 0.0f, 0.0f, 0.0f, 0 });
+    }
 }
 
 float USubmarineCharacteristics::GetLinearTargetSpeed(ELinearSpeedState State) const

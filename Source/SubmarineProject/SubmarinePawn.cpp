@@ -66,6 +66,20 @@ void ASubmarinePawn::BeginPlay()
     PitchAngularMomentum = 0.f;
     PitchVelocity = 0.f;
 
+    // Wire DA to physics component — MUST happen before physics component ticks
+    if (PhysicsHandler)
+        PhysicsHandler->Characteristics = Characteristics;
+
+    // Lock roll so collisions never tilt the submarine sideways
+    if (SubmarineBody)
+    {
+        SubmarineBody->SetConstraintMode(EDOFMode::SixDOF);
+        SubmarineBody->BodyInstance.bLockXRotation = false;
+        SubmarineBody->BodyInstance.bLockYRotation = false;
+        SubmarineBody->BodyInstance.bLockZRotation = false;
+        // We enforce roll=0 manually each tick instead
+    }
+
     // Detach 3rd person camera from root so it doesn't inherit submarine rotation
     ThirdPersonCamera->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
 
@@ -88,6 +102,7 @@ void ASubmarinePawn::BeginPlay()
     {
         Prim->SetGenerateOverlapEvents(true);
         Prim->OnComponentBeginOverlap.AddDynamic(this, &ASubmarinePawn::OnOverlapBegin);
+        Prim->OnComponentEndOverlap.AddDynamic(this, &ASubmarinePawn::OnOverlapEnd);
         UE_LOG(LogTemp, Warning, TEXT("Bound overlap to: %s"), *Prim->GetName());
     }
 
@@ -115,6 +130,15 @@ void ASubmarinePawn::Tick(float DeltaTime)
     TickYawMovement(DeltaTime);
     TickFinalMovement(DeltaTime);
     TickCameraSwitch(DeltaTime);
+    TickAntiStuck(DeltaTime);
+
+    // Enforce zero roll every tick — collisions must never tilt the submarine sideways
+    FRotator Rot = GetActorRotation();
+    if (FMath::Abs(Rot.Roll) > KINDA_SMALL_NUMBER)
+    {
+        Rot.Roll = 0.f;
+        SetActorRotation(Rot);
+    }
 
     // Update active camera positions
     if (CameraState == ESubmarineCameraState::Periscope)
@@ -387,13 +411,40 @@ void ASubmarinePawn::TickVerticalMovement(float DeltaTime)
         CurrentPitch = FMath::FInterpConstantTo( CurrentPitch, TargetPitch, DeltaTime, AppliedAcceleration);
     }
 
-    // Apply pitch to actor rotation (this also moves the camera since it's attached)
-    FRotator Rot = GetActorRotation();
-    Rot.Pitch = CurrentPitch;
-    SetActorRotation(Rot);
+    // Apply pitch via swept rotation so pitching into walls is detected
+    const FRotator CurrentRot = GetActorRotation();
+    const FRotator TargetRot = FRotator(CurrentPitch, CurrentRot.Yaw, 0.f);
+    const FRotator DeltaRot = TargetRot - CurrentRot;
+
+    if (!DeltaRot.IsNearlyZero(KINDA_SMALL_NUMBER))
+    {
+        FHitResult RotHit;
+        // Use local rotation for pitch — avoids gimbal lock entirely
+        AddActorLocalRotation(FRotator(DeltaRot.Pitch, 0.f, 0.f), true, &RotHit);
+
+        if (RotHit.IsValidBlockingHit() && RotHit.GetActor() && CollisionHandler && !Stats->bEnableBluePrintCollisions)
+        {
+            RegisterHit(RotHit.GetActor(), RotHit);
+            UE_LOG(LogTemp, Warning, TEXT("[RotHit-Pitch] Hit %s"), *RotHit.GetActor()->GetName());
+            CollisionHandler->ProcessHit(RotHit, RotHit.GetActor());
+            PitchVelocity = 0.f;
+            CurrentPitch = GetActorRotation().Pitch;
+        }
+
+        // Always enforce zero roll after any rotation
+        FRotator AfterRot = GetActorRotation();
+        if (FMath::Abs(AfterRot.Roll) > KINDA_SMALL_NUMBER)
+        {
+            AfterRot.Roll = 0.f;
+            SetActorRotation(AfterRot);
+        }
+    }
 
     // Convert pitch to vertical speed
     const float PitchRatio = CurrentPitch / FMath::Max(Stats->MaxPitchAngle, 1.f);
+    float MoveSign = (FMath::Abs(CurrentLinearSpeed) > 1.f)
+        ? FMath::Sign(CurrentLinearSpeed)
+        : 1.f;
     float VerticalSpeed = PitchRatio * Stats->MaxVerticalSpeed;
 
     // Cross-boost: submarine is linearly still -> vertical gets a boost
@@ -404,9 +455,27 @@ void ASubmarinePawn::TickVerticalMovement(float DeltaTime)
 
     if (PhysicsHandler)
     {
-        PhysicsHandler->TargetVerticalSpeed = VerticalSpeed;
-        UE_LOG(LogTemp, Warning, TEXT("TargetVerticalSpeed: %.1f CurrentVerticalSpeed: %.1f"),
-            PhysicsHandler->TargetVerticalSpeed, CurrentVerticalSpeed);
+        const float PitchBlend = FMath::Abs(PitchRatio); // 0 at flat, 1 at max pitch
+
+        if (PitchBlend < 0.01f)
+        {
+            // Pitch is essentially 0 — drain Z velocity toward 0 quickly
+            // so buoyancy/gravity reach equilibrium without residual movement
+            PhysicsHandler->PhysicsVelocity.Z = FMath::FInterpConstantTo(
+                PhysicsHandler->PhysicsVelocity.Z, 0.f,
+                GetWorld()->GetDeltaSeconds(), Stats->VerticalDeceleration);
+        }
+        else
+        {
+            // Actively pitching — override Z velocity with input intent
+            PhysicsHandler->PhysicsVelocity.Z = FMath::Lerp(
+                PhysicsHandler->PhysicsVelocity.Z,
+                VerticalSpeed,
+                PitchBlend);
+        }
+
+        // Clear target so thrust doesn't fight us
+        PhysicsHandler->TargetVerticalSpeed = 0.f;
     }
 
 
@@ -435,10 +504,19 @@ void ASubmarinePawn::TickYawMovement(float DeltaTime)
     CurrentYawSpeed += ExternalYawVelocity * DeltaTime;
     ExternalYawVelocity = FMath::FInterpTo(ExternalYawVelocity, 0.f, DeltaTime, Stats->Deceleration_Rotation);
 
+    const float YawDelta = CurrentYawSpeed * DeltaTime;
+    if (FMath::Abs(YawDelta) > KINDA_SMALL_NUMBER)
+    {
+        FHitResult RotHit;
+        AddActorWorldRotation(FRotator(0.f, YawDelta, 0.f), true, &RotHit);
 
-    FRotator Rot = GetActorRotation();
-    Rot.Yaw += CurrentYawSpeed * DeltaTime;
-    SetActorRotation(Rot);
+        if (RotHit.IsValidBlockingHit() && RotHit.GetActor() && CollisionHandler && !Stats->bEnableBluePrintCollisions)
+        {
+            RegisterHit(RotHit.GetActor(), RotHit);
+            UE_LOG(LogTemp, Warning, TEXT("[RotHit-Yaw] Hit %s"), *RotHit.GetActor()->GetName());
+            CollisionHandler->ProcessHit(RotHit, RotHit.GetActor());
+        }
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -452,28 +530,57 @@ void ASubmarinePawn::TickFinalMovement(float DeltaTime)
 
     if (PhysicsHandler)
     {
-        // Linear: input-driven along forward axis
-        const FVector LinearDelta =
-            GetActorForwardVector() * (CurrentLinearSpeed + ExternalLinearVelocity) * DeltaTime;
+        const float TotalLinearSpeed = CurrentLinearSpeed + ExternalLinearVelocity;
 
-        // Vertical: blend input-driven and physics (buoyancy/gravity)
-        // Physics gets more weight near the surface, input dominates when submerged
-        const float DepthBlend = FMath::Clamp(
-            PhysicsHandler->CurrentDepth / FMath::Max(Stats->SurfaceTransitionDepth, 1.f),
-            0.f, 1.f);
-        const float PhysicsWeight = (1.f - DepthBlend) * 0.3f; // max 30% physics influence
+        // When going backward, the effective travel direction is opposite to
+        // the actor's forward vector. We flip the vector so that nose-down +
+        // backward still moves the sub backward-and-down (not backward-and-up).
+        const FVector TravelDirection = (TotalLinearSpeed >= 0.f)
+            ? GetActorForwardVector()
+            : -GetActorForwardVector();
 
-        const float InputVertical = (CurrentVerticalSpeed + ExternalVerticalVelocity) * DeltaTime;
-        const float PhysicsVertical = PhysicsHandler->PhysicsVelocity.Z * DeltaTime;
-        const float VerticalDelta = FMath::Lerp(InputVertical, PhysicsVertical, PhysicsWeight);
+        FVector LinearDelta = TravelDirection * FMath::Abs(TotalLinearSpeed) * DeltaTime;
+
+        // Attenuate the vertical bleed from linear movement.
+        // LinearInfluenceVertically = 1.0 -> full Z contribution from hull pitch.
+        // LinearInfluenceVertically = 0.0 -> linear thrust is purely horizontal.
+        LinearDelta.Z *= Stats->LinearInfluenceVertically;
+
+        const float VerticalDelta =
+            (PhysicsHandler->PhysicsVelocity.Z + ExternalVerticalVelocity) * DeltaTime;
 
         MoveDelta = LinearDelta + FVector(0.f, 0.f, VerticalDelta);
+
+        // Debug every 2s
+        static float DbgTimer = 0.f;
+        DbgTimer += DeltaTime;
+        if (DbgTimer >= 2.f)
+        {
+            DbgTimer = 0.f;
+            UE_LOG(LogTemp, Warning,
+                TEXT("[Move] SubZ=%.0f WaterZ=%.0f Depth=%.0f | PhysVelZ=%.1f | TargetVSpd=%.1f | InputVSpd=%.1f | LinearSpd=%.1f | Above=%d"),
+                GetActorLocation().Z,
+                Stats->WaterSurfaceZ,
+                PhysicsHandler->CurrentDepth,
+                PhysicsHandler->PhysicsVelocity.Z,
+                PhysicsHandler->TargetVerticalSpeed,
+                CurrentVerticalSpeed,
+                CurrentLinearSpeed,
+                PhysicsHandler->bAboveSurface ? 1 : 0);
+        }
     }
     else
     {
         // Fallback: no physics component
-        MoveDelta =
-            GetActorForwardVector() * (CurrentLinearSpeed + ExternalLinearVelocity) * DeltaTime +
+        const float TotalLinearSpeed = CurrentLinearSpeed + ExternalLinearVelocity;
+        const FVector TravelDirection = (TotalLinearSpeed >= 0.f)
+            ? GetActorForwardVector()
+            : -GetActorForwardVector();
+
+        FVector LinearDelta = TravelDirection * FMath::Abs(TotalLinearSpeed) * DeltaTime;
+        LinearDelta.Z *= Stats->LinearInfluenceVertically;
+
+        MoveDelta = LinearDelta +
             FVector(0.f, 0.f, (CurrentVerticalSpeed + ExternalVerticalVelocity) * DeltaTime);
     }
 
@@ -483,12 +590,15 @@ void ASubmarinePawn::TickFinalMovement(float DeltaTime)
     FHitResult Hit;
     AddActorWorldOffset(MoveDelta, true, &Hit);
 
-    if (Hit.IsValidBlockingHit() && Hit.GetActor())
+    if (Hit.IsValidBlockingHit() && Hit.GetActor() && !Stats->bEnableBluePrintCollisions)
     {
+        // Register for anti-stuck tracking
+        RegisterHit(Hit.GetActor(), Hit);
+
         if (CollisionHandler)
             CollisionHandler->ProcessHit(Hit, Hit.GetActor());
 
-        // -- Push hit actor if it's another submarine -----------------------
+        // -- Push hit actor if it's another submarine ------------------------
         ASubmarinePawn* HitSub = Cast<ASubmarinePawn>(Hit.GetActor());
         if (HitSub)
         {
@@ -917,10 +1027,8 @@ void ASubmarinePawn::OnOverlapBegin(UPrimitiveComponent* OverlappedComp, AActor*
     UPrimitiveComponent* OtherComp, int32 OtherBodyIndex,
     bool bFromSweep, const FHitResult& SweepResult)
 {
-    if (!OtherActor || !OtherActor->IsValidLowLevel() || OtherActor == this)
-        return;
-
-    UE_LOG(LogTemp, Warning, TEXT("OVERLAP! Other: %s"), *OtherActor->GetName());
+    if (!OtherActor || !OtherActor->IsValidLowLevel() || OtherActor == this) return;
+    RegisterHit(OtherActor, SweepResult);
     if (CollisionHandler)
         CollisionHandler->ProcessHit(SweepResult, OtherActor);
 }
@@ -928,9 +1036,68 @@ void ASubmarinePawn::OnOverlapBegin(UPrimitiveComponent* OverlappedComp, AActor*
 void ASubmarinePawn::OnOverlapEnd(UPrimitiveComponent* OverlappedComp, AActor* OtherActor,
     UPrimitiveComponent* OtherComp, int32 OtherBodyIndex)
 {
-    if (!OtherActor) return;
-    TWeakObjectPtr<AActor> WeakOther(OtherActor);
-    OverlapDurations.Remove(WeakOther);
+    // Don't remove immediately — ThresholdOut handles cleanup in TickAntiStuck
+}
+
+// -----------------------------------------------------------------------------
+//  Collision Blueprint Handler 
+// -----------------------------------------------------------------------------
+
+
+void ASubmarinePawn::HandleHitFromBlueprint(const FHitResult& Hit)
+{
+    const USubmarineCharacteristics* Stats = GetStats();
+    if (Hit.IsValidBlockingHit() && Hit.GetActor() && Stats->bEnableBluePrintCollisions && CollisionHandler)
+    {
+        CollisionHandler->ProcessHit(Hit, Hit.GetActor());
+    }
+}
+
+// -----------------------------------------------------------------------------
+//  RegisterHit — called from both OnOverlapBegin and TickFinalMovement
+// -----------------------------------------------------------------------------
+void ASubmarinePawn::RegisterHit(AActor* OtherActor, const FHitResult& Hit)
+{
+    const USubmarineCharacteristics* Stats = GetStats();
+    if (!OtherActor || !IsValid(OtherActor) || !Stats->bEnableAntiStuckPhysics) return;
+
+    const float Now = GetWorld()->GetTimeSeconds();
+
+    FHitTracker* Tracker = HitTrackers.Find(OtherActor);
+    if (!Tracker)
+    {
+        // First time hitting this actor
+        FHitTracker NewTracker;
+        NewTracker.FirstHitTime = Now;
+        NewTracker.LastHitTime = Now;
+        if (!Hit.ImpactNormal.IsNearlyZero())
+        {
+            NewTracker.NormalSum = Hit.ImpactNormal;
+            NewTracker.NormalCount = 1;
+        }
+        HitTrackers.Add(OtherActor, NewTracker);
+
+        UE_LOG(LogTemp, Warning, TEXT("[AntiStuck] NEW contact: %s"), *OtherActor->GetName());
+    }
+    else
+    {
+        // Already tracked — update last hit time and accumulate normal
+        Tracker->LastHitTime = Now;
+        if (!Hit.ImpactNormal.IsNearlyZero())
+        {
+            Tracker->NormalSum += Hit.ImpactNormal;
+            Tracker->NormalCount += 1;
+        }
+    }
+}
+
+void ASubmarinePawn::RegisterHitFromBlueprint(const FHitResult& Hit)
+{
+    // Called from Blueprint Event Hit — feeds the anti-stuck tracker
+    const USubmarineCharacteristics* Stats = GetStats();
+    if (Hit.GetActor() && Hit.GetActor() != this && Stats->bEnableBluePrintCollisions) {
+        RegisterHit(Hit.GetActor(), Hit);
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -939,53 +1106,85 @@ void ASubmarinePawn::OnOverlapEnd(UPrimitiveComponent* OverlappedComp, AActor* O
 void ASubmarinePawn::TickAntiStuck(float DeltaTime)
 {
     const USubmarineCharacteristics* Stats = GetStats();
-    if (!Stats) return;
+    if (!Stats || HitTrackers.Num() == 0) return;
 
-    TArray<TWeakObjectPtr<AActor>> ToRemove;
+    const float Now = GetWorld()->GetTimeSeconds();
 
-    for (auto& Pair : OverlapDurations)
+    TArray<AActor*> ToRemove;
+
+    for (auto& Pair : HitTrackers)
     {
-        TWeakObjectPtr<AActor> WeakOther = Pair.Key;
-        if (!WeakOther.IsValid())
+        AActor* Other = Pair.Key;
+        FHitTracker& Tracker = Pair.Value;
+
+        if (!IsValid(Other))
         {
-            ToRemove.Add(WeakOther);
+            ToRemove.Add(Other);
             continue;
         }
 
-        Pair.Value += DeltaTime;
-
-        if (Pair.Value >= Stats->AntiStuckThreshold)
+        // ThresholdOut: if we haven't hit this actor recently, forget it
+        const float TimeSinceLastHit = Now - Tracker.LastHitTime;
+        if (TimeSinceLastHit > Stats->AntiStuckThresholdOut)
         {
-            // Direction: away from the other actor's center
-            FVector ExpulsionDir = GetActorLocation() - WeakOther->GetActorLocation();
-            if (ExpulsionDir.IsNearlyZero())
-                ExpulsionDir = FVector::UpVector;
-            else
-                ExpulsionDir.Normalize();
+            UE_LOG(LogTemp, Warning, TEXT("[AntiStuck] FORGET %s (no hit for %.2fs)"),
+                *Other->GetName(), TimeSinceLastHit);
+            ToRemove.Add(Other);
+            continue;
+        }
 
-            const FVector Impulse = ExpulsionDir * Stats->AntiStuckForce;
+        // ThresholdIn: how long have we been in continuous contact?
+        const float ContactDuration = Tracker.LastHitTime - Tracker.FirstHitTime;
 
-            UE_LOG(LogTemp, Warning,
-                TEXT("[AntiStuck] Expelling from %s force=%.0f"),
-                *WeakOther->GetName(), Stats->AntiStuckForce);
+        if (ContactDuration >= Stats->AntiStuckThresholdIn)
+        {
+            // Check cooldown
+            const float TimeSinceExpulsion = Now - Tracker.LastExpulsionTime;
+            if (TimeSinceExpulsion < Stats->AntiStuckCooldown)
+                continue;
 
-            // Apply to our movement
-            SetExternalLinearVelocity(GetExternalLinearVelocity() +
-                FVector::DotProduct(Impulse, GetActorForwardVector()));
-            SetExternalVerticalVelocity(GetExternalVerticalVelocity() + Impulse.Z);
+            // Compute escape direction from accumulated normals
+            FVector EscapeDir = FVector::ZeroVector;
+            if (Tracker.NormalCount > 0)
+                EscapeDir = (Tracker.NormalSum / Tracker.NormalCount).GetSafeNormal();
 
-            // Push other submarine away too if it has physics
-            if (USubmarinePhysicsComponent* OtherPhysics =
-                WeakOther->FindComponentByClass<USubmarinePhysicsComponent>())
+            // Fallback: center-to-center
+            if (EscapeDir.IsNearlyZero())
             {
-                OtherPhysics->AddImpulse(-Impulse);
+                EscapeDir = GetActorLocation() - Other->GetActorLocation();
+                if (EscapeDir.IsNearlyZero()) EscapeDir = FVector::UpVector;
+                EscapeDir.Normalize();
             }
 
-            // Reset by cooldown so it fires again if still stuck
-            Pair.Value -= Stats->AntiStuckCooldown;
+            UE_LOG(LogTemp, Warning,
+                TEXT("[AntiStuck] FIRE on %s! Contact=%.2fs Dir=(%.2f,%.2f,%.2f) Force=%.0f"),
+                *Other->GetName(), ContactDuration,
+                EscapeDir.X, EscapeDir.Y, EscapeDir.Z,
+                Stats->AntiStuckForce);
+
+            // Brute-force nudge
+            AddActorWorldOffset(EscapeDir * 5.f, false);
+
+            // Apply escape velocity
+            const FVector WorldImpulse = EscapeDir * Stats->AntiStuckForce;
+            const float ForwardComp = FVector::DotProduct(WorldImpulse, GetActorForwardVector());
+            SetExternalLinearVelocity(GetExternalLinearVelocity() + ForwardComp);
+            SetExternalVerticalVelocity(GetExternalVerticalVelocity() + WorldImpulse.Z);
+
+            // Push other actor away
+            if (USubmarinePhysicsComponent* OtherPhysics =
+                Other->FindComponentByClass<USubmarinePhysicsComponent>())
+            {
+                OtherPhysics->AddImpulse(-WorldImpulse);
+            }
+
+            // Record expulsion time, reset normals
+            Tracker.LastExpulsionTime = Now;
+            Tracker.NormalSum = FVector::ZeroVector;
+            Tracker.NormalCount = 0;
         }
     }
 
-    for (auto& Dead : ToRemove)
-        OverlapDurations.Remove(Dead);
+    for (AActor* Dead : ToRemove)
+        HitTrackers.Remove(Dead);
 }

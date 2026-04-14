@@ -53,8 +53,28 @@ struct FCollisionBounceEntry
      * Multiply the spinning force after an impact.
      * Higher = stronger spin.
      */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Collision")
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Collision", meta = (ClampMin = "0.00"))
     float Collision_RotationFactor = 0.5f;
+
+    /** Enable Yaw/Pitch different Rotation Factor */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Collision")
+    bool bEnableYawPitchSplitFactors = false;
+
+    /**
+     * Multiply the Yaw spinning force after an impact.
+     * Higher = stronger spin.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Collision",
+        meta = (ClampMin = "0.00", EditCondition = "bEnableYawPitchSplitFactors"))
+    float Collision_YawRotationFactor = 0.5f;
+
+    /**
+     * Multiply the Pitch spinning force after an impact.
+     * Higher = stronger spin.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Collision",
+        meta = (ClampMin = "0.00", EditCondition = "bEnableYawPitchSplitFactors"))
+    float Collision_PitchRotationFactor = 0.5f;
 
     /**
      * Percentage of speed lost after an impact.
@@ -115,6 +135,7 @@ class SUBMARINEPROJECT_API USubmarineCharacteristics : public UDataAsset
 
 public:
     USubmarineCharacteristics();
+    virtual void PostInitProperties() override;
 
     // -- Linear movement -----------------------
 
@@ -136,6 +157,18 @@ public:
      */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Linear Movement")
     float LinearStateHoldInterval = 0.25f;
+
+    /**
+     * How much the submarine's pitch angle bleeds into vertical movement
+     * from linear (forward/backward) thrust.
+     * 0.0 = linear thrust is purely horizontal regardless of pitch.
+     * 1.0 = full Z contribution (pitched nose-down at max reverse = strong downward pull).
+     * Recommended: 0.2–0.4 so pitch feels meaningful without overpowering
+     * the dedicated vertical speed system at high reverse speeds.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Linear Movement",
+        meta = (ClampMin = "0.0", ClampMax = "1.0"))
+    float LinearInfluenceVertically = 0.3f;
 
     // -- Vertical movement -----------------------
 
@@ -251,6 +284,19 @@ public:
         meta = (ClampMin = "0.0"))
     float DamageResistance = 1.f;
 
+    // -- Torpedo -----------------------------------------------------------
+
+    /**
+     * Local-space offset from the submarine's root where torpedoes spawn.
+     * X = forward (positive = in front of the sub),
+     * Y = right,
+     * Z = up.
+     * Example: FVector(300.f, 0.f, -20.f) spawns 3 m ahead, slightly below centre.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Torpedo",
+        meta = (DisplayName = "Torpedo Spawn Offset"))
+    FVector TorpedoSpawnOffset = FVector(300.f, 0.f, 0.f);
+
     // -- Collision --------------------------------
 
     /**
@@ -284,6 +330,14 @@ public:
     float BounceSpeedDivisor = 800.f;
 
     /**
+     * Maximum Torque for Collisions spinning rotation for bounce effect.
+     * BounceForce is multiplied by (DefaultMult + |CurrentLinearSpeed| / BounceSpeedDivisor).
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Collision",
+        meta = (ClampMin = "0.0"))
+    float MaxTorque = 50.f;
+
+    /**
      * Multiplier for bounce force with no speed.
      * BounceForce is multiplied by (0.2 + |CurrentLinearSpeed| / BounceSpeedDivisor).
      */
@@ -291,20 +345,39 @@ public:
         meta = (ClampMin = "0.0", ClampMax = "1.0"))
     float DefaultMult = 0.2f;
 
+    /** Enable Collisions from BluePrint */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Collision")
+    bool bEnableBluePrintCollisions = false;
+
     // -- Anti-stuck ------------------------------
 
-    /** Seconds of continuous overlap before the expulsion force fires */
+    /** Enable depth pressure effects */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Collision|AntiStuck")
+    bool bEnableAntiStuckPhysics = false;
+
+   /** Seconds of continuous blocking hit before expulsion fires */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Collision|AntiStuck",
-        meta = (ClampMin = "0.06"))
-    float AntiStuckThreshold = 0.3f;
+        meta = (ClampMin = "0.05", EditCondition = "bEnableAntiStuckPhysics"))
+    float AntiStuckThresholdIn = 0.2f;
+
+    /**
+     * Seconds without a hit before an actor is forgotten from the stuck tracker.
+     * If you stop hitting something for this long, it resets as if never hit.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Collision|AntiStuck",
+        meta = (ClampMin = "0.05",
+        EditCondition = "bEnableAntiStuckPhysics"))
+    float AntiStuckThresholdOut = 0.12f;
 
     /** Expulsion impulse magnitude (cm/s) away from penetrating object */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Collision|AntiStuck")
-    float AntiStuckForce = 3000.f;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Collision|AntiStuck",
+        meta = (EditCondition = "bEnableAntiStuckPhysics"))
+    float AntiStuckForce = 2000.f;
 
     /** Cooldown (seconds) between anti-stuck firings against the same actor */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Collision|AntiStuck",
-        meta = (ClampMin = "0.06"))
+        meta = (ClampMin = "0.06",
+        EditCondition = "bEnableAntiStuckPhysics"))
     float AntiStuckCooldown = 0.15f;
 
     // -- Physics: General ----------------------
@@ -333,7 +406,7 @@ public:
 
     /** World Z coordinate of the water surface (cm) */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Physics|Buoyancy")
-    float WaterSurfaceZ = 0.f;
+    float WaterSurfaceZ = 1000.f;
 
     /**
      * Depth range over which buoyancy transitions from 0 to full (cm).
@@ -389,12 +462,24 @@ public:
     float PressureDepthThreshold = 5000.f;
 
     /**
-     * Rate at which pressure increases per cm of depth beyond threshold.
-     * Also attenuates buoyancy at depth.
+     * Rate at which the downward pressure FORCE increases per cm of depth
+     * beyond PressureDepthThreshold. Controls how strongly the submarine
+     * is pushed down at great depth.
+     * F_pressure = ExcessDepth * DepthPressureCoefficient * DepthPhysicsInfluence
      */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Physics|Depth",
         meta = (ClampMin = "0.0", EditCondition = "bEnableDepthPhysics"))
-    float DepthPressureCoefficient = 0.00001f;
+    float DepthPressureCoefficient = 0.1f;
+
+    /**
+     * Rate at which buoyancy is reduced with depth.
+     * BuoyancyAttenuation = max(0, 1 - depth * BuoyancyDepthNerfCoefficient)
+     * This is SEPARATE from the pressure force above.
+     * Set to 0 to disable buoyancy nerf entirely.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Physics|Depth",
+        meta = (ClampMin = "0.0", EditCondition = "bEnableDepthPhysics"))
+    float BuoyancyDepthNerfCoefficient = 0.000001f;
 
     // -- Camera (POV) -----------------------------
 

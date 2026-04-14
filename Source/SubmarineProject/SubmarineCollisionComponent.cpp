@@ -207,14 +207,45 @@ void USubmarineCollisionComponent::ApplyBounce(const FHitResult& Hit,
         float NewExternalVerticalVelocity = OwnerPawn->GetExternalVerticalVelocity() + LocalBounce.Z;
         OwnerPawn->SetExternalVerticalVelocity(NewExternalVerticalVelocity);
 
-        const float RotationFactor = BounceData.Collision_RotationFactor;
+        const bool bHasValidImpactPoint = !Hit.ImpactPoint.IsNearlyZero() &&
+            FVector::DistSquared(Hit.ImpactPoint, OwnerPawn->GetActorLocation()) > 1.f;
 
-        float NewExternalYawVelocity = OwnerPawn->GetExternalYawVelocity() + LocalBounce.Y * RotationFactor;
-        OwnerPawn->SetExternalYawVelocity(NewExternalYawVelocity);
+        if (bHasValidImpactPoint)
+        {
 
-        float NewExternalPitchVelocity = OwnerPawn->GetExternalPitchVelocity() + -LocalBounce.X * RotationFactor;
-        OwnerPawn->SetExternalPitchVelocity(NewExternalPitchVelocity);
+            // Injecting rotation bounce based of Moment
+            const FVector COM = OwnerPawn->GetActorLocation();
+            const FVector ImpactPoint = Hit.ImpactPoint;
 
+            // Lever Arm
+            const FVector Lever = ImpactPoint - COM;
+
+            // Torque
+            const FVector Torque = FVector::CrossProduct(Lever, BounceVelocity);
+            const FVector LocalTorque =
+                OwnerPawn->GetActorTransform().InverseTransformVectorNoScale(Torque);
+
+            // Extract axes
+            float PitchTorque = LocalTorque.Y;
+            float YawTorque = LocalTorque.Z;
+
+            // Clamp
+            const float MaxTorque = Stats->MaxTorque;
+            PitchTorque = FMath::Clamp(PitchTorque, -MaxTorque, MaxTorque);
+            YawTorque = FMath::Clamp(YawTorque, -MaxTorque, MaxTorque);
+
+            const float YawRotationFactor = BounceData.bEnableYawPitchSplitFactors ? BounceData.Collision_YawRotationFactor : BounceData.Collision_RotationFactor;
+            const float PitchRotationFactor = BounceData.bEnableYawPitchSplitFactors ? BounceData.Collision_PitchRotationFactor : BounceData.Collision_RotationFactor;
+
+            // Apply
+            float NewExternalYawVelocity = OwnerPawn->GetExternalYawVelocity() + YawTorque * YawRotationFactor;
+            NewExternalYawVelocity = FMath::Clamp(NewExternalYawVelocity, -Stats->MaxYawSpeed, Stats->MaxYawSpeed);
+            OwnerPawn->SetExternalYawVelocity(NewExternalYawVelocity);
+
+            float NewExternalPitchVelocity = OwnerPawn->GetExternalPitchVelocity() - PitchTorque * PitchRotationFactor;
+            NewExternalPitchVelocity = FMath::Clamp(NewExternalPitchVelocity, -Stats->MaxVerticalSpeed, Stats->MaxVerticalSpeed);
+            OwnerPawn->SetExternalPitchVelocity(NewExternalPitchVelocity);
+        }
     }
 }
 
