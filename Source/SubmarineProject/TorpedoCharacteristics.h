@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DataAsset.h"
+#include "NiagaraSystem.h"
 #include "TorpedoCharacteristics.generated.h"
 
 // ---------------------------------------------
@@ -92,37 +93,103 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Torpedo|Physics")
     float PhysicsMaxSpeed = 8000.f;
 
-    // -- Impact / Damage ---------------------------------------------------
+    // -- Direct hit damage -------------------------------------------------
 
-    /** Direct damage dealt to a submarine on contact */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Torpedo|Damage")
+    /** Full damage dealt on direct contact */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Torpedo|Damage|Direct")
     float AttackDamage = 100.f;
 
-    /** Radius of explosion splash damage (0 = no splash) */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Torpedo|Damage",
+    /** Push force applied to the struck submarine (cm/s) */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Torpedo|Damage|Direct")
+    float ImpactBounceForce = 800.f;
+
+    /** Linear speed states lost by the struck submarine */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Torpedo|Damage|Direct",
+        meta = (ClampMin = "0", ClampMax = "6"))
+    int32 ImpactSpeedStatePenalty = 1;
+
+    // -- Splash / indirect damage ------------------------------------------
+
+    /**
+     * Radius of the explosion splash (cm). 0 = no splash.
+     * Submarines inside this radius but NOT directly hit receive indirect damage.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Torpedo|Damage|Splash",
         meta = (ClampMin = "0.0"))
     float ExplosionRadius = 300.f;
 
     /**
-     * Damage falloff at the edge of the explosion radius.
-     * 0 = zero damage at edge, 1 = full damage all the way to edge.
+     * Damage multiplier at the CENTER of the explosion for indirect hits.
+     * Range 0..1 (1 = full AttackDamage). Must be >= SplashDamageMin.
+     * Direct hits always receive full AttackDamage regardless of this value.
      */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Torpedo|Damage",
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Torpedo|Damage|Splash",
         meta = (ClampMin = "0.0", ClampMax = "1.0"))
-    float SplashDamageFalloff = 0.2f;
+    float SplashDamageMax = 0.8f;
 
     /**
-     * Bounce/push force (cm/s) applied to the hit submarine.
+     * Damage multiplier at the EDGE of the explosion radius for indirect hits.
+     * Range 0..1. Clamped to <= SplashDamageMax at runtime.
      */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Torpedo|Damage")
-    float ImpactBounceForce = 800.f;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Torpedo|Damage|Splash",
+        meta = (ClampMin = "0.0", ClampMax = "1.0"))
+    float SplashDamageMin = 0.1f;
 
     /**
-     * How many linear speed states the struck submarine loses on impact.
+     * If true, this torpedo CAN deal splash damage to the submarine that fired it.
+     * The firing submarine's bImmuneToOwnTorpedoSplash (on SubmarineCharacteristics)
+     * can still override this to false.
+     *
+     * Logic: splash hits firing sub only if (bCanSelfDamage == true) AND
+     *        (FiringSubmarine->bImmuneToOwnTorpedoSplash == false).
      */
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Torpedo|Damage",
-        meta = (ClampMin = "0", ClampMax = "6"))
-    int32 ImpactSpeedStatePenalty = 1;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Torpedo|Damage|Splash")
+    bool bCanSelfDamage = false;
+
+    /**
+     * Returns the validated SplashDamageMin, clamped so it never exceeds SplashDamageMax.
+     * Always use this getter in code instead of reading SplashDamageMin directly.
+     */
+    UFUNCTION(BlueprintPure, Category = "Torpedo|Damage")
+    float GetSafeSplashDamageMin() const
+    {
+        return FMath::Min(SplashDamageMin, SplashDamageMax);
+    }
+
+    /**
+     * Computes indirect splash damage for a target at the given distance from the explosion.
+     * Returns 0 if distance >= ExplosionRadius or radius is 0.
+     * Linear interpolation between SplashDamageMax (center) and SplashDamageMin (edge).
+     */
+    UFUNCTION(BlueprintPure, Category = "Torpedo|Damage")
+    float ComputeSplashDamage(float DistanceFromExplosion) const
+    {
+        if (ExplosionRadius <= 0.f || DistanceFromExplosion >= ExplosionRadius)
+            return 0.f;
+
+        // Alpha: 1.0 at center, 0.0 at edge
+        const float Alpha = 1.f - FMath::Clamp(DistanceFromExplosion / ExplosionRadius, 0.f, 1.f);
+        const float Multiplier = FMath::Lerp(GetSafeSplashDamageMin(), SplashDamageMax, Alpha);
+        return AttackDamage * Multiplier;
+    }
+
+    // -- VFX ---------------------------------------------------------------
+
+    /**
+     * Niagara particle system spawned at the explosion point.
+     * Assign your NS_TorpedoExplosion asset here in the DataAsset editor.
+     * See NIAGARA_SETUP_GUIDE.md for how to create this asset.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Torpedo|VFX")
+    TObjectPtr<UNiagaraSystem> ExplosionEffect;
+
+    /**
+     * Scale applied to the explosion Niagara system at spawn.
+     * Increase for heavier torpedoes.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Torpedo|VFX",
+        meta = (ClampMin = "0.01"))
+    float ExplosionEffectScale = 1.f;
 
     // -- Camera (POV) ------------------------------------------------------
 

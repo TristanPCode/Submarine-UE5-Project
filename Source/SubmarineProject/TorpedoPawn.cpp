@@ -7,6 +7,8 @@
 #include "Camera/CameraComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/OverlapResult.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraComponent.h"
 
 ATorpedoPawn::ATorpedoPawn()
 {
@@ -17,6 +19,10 @@ ATorpedoPawn::ATorpedoPawn()
     // Generate hit events so we can react to collisions
     TorpedoBody->SetNotifyRigidBodyCollision(true);
     TorpedoBody->SetGenerateOverlapEvents(false);
+
+    // Collision profile: block pawns/world so hit events fire,
+    // but we'll ignore the specific firing submarine at spawn.
+    TorpedoBody->SetCollisionProfileName(TEXT("BlockAll"));
 
     // POV camera — attached to root, inherits torpedo rotation
     POVCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("CameraPOV"));
@@ -53,6 +59,21 @@ void ATorpedoPawn::BeginPlay()
     // Bind hit delegate
     TorpedoBody->OnComponentHit.AddDynamic(this, &ATorpedoPawn::OnTorpedoHit);
 
+    // Make the torpedo pass completely through the firing submarine.
+    // This is the primary passthrough mechanism — does not rely on actor checks.
+    // Ignore firing submarine — called here AND at SetCharacteristics for safety
+    if (IsValid(FiringShooter))
+    {
+        TorpedoBody->IgnoreActorWhenMoving(FiringShooter.Get(), true);
+        UE_LOG(LogTemp, Warning, TEXT("[Torpedo] %s ignoring %s"),
+            *GetName(), *FiringShooter->GetName());
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("[Torpedo] %s — FiringSubmarine is NULL at BeginPlay!"), *GetName());
+    }
+
+
     // Initialise camera offsets if Characteristics is already set
     if (const UTorpedoCharacteristics* Stats = GetStats())
     {
@@ -64,6 +85,13 @@ void ATorpedoPawn::BeginPlay()
 
     // Start in POV
     ActivatePOVCamera();
+
+    UE_LOG(LogTemp, Warning, TEXT("[Torpedo] %s spawned at %s, InitialVel=(%.0f,%.0f,%.0f)"),
+        *GetName(),
+        *GetActorLocation().ToString(),
+        PhysicsHandler ? PhysicsHandler->PhysicsVelocity.X : 0.f,
+        PhysicsHandler ? PhysicsHandler->PhysicsVelocity.Y : 0.f,
+        PhysicsHandler ? PhysicsHandler->PhysicsVelocity.Z : 0.f);
 }
 
 // -----------------------------------------------------------------------------
@@ -75,6 +103,10 @@ void ATorpedoPawn::SetCharacteristics(UTorpedoCharacteristics* InCharacteristics
 
     if (PhysicsHandler)
         PhysicsHandler->Characteristics = Characteristics;
+
+    // Set ignore as early as possible — before FinishSpawning / BeginPlay
+    if (IsValid(FiringShooter))
+        TorpedoBody->IgnoreActorWhenMoving(FiringShooter.Get(), true);
 }
 
 void ATorpedoPawn::SetInitialVelocity(const FVector& WorldVelocity)
@@ -98,6 +130,7 @@ void ATorpedoPawn::Tick(float DeltaTime)
     LifetimeElapsed += DeltaTime;
     if (Stats && LifetimeElapsed >= Stats->MaxLifetime)
     {
+        UE_LOG(LogTemp, Warning, TEXT("[Torpedo] %s lifetime expired after %.2fs"), *GetName(), LifetimeElapsed);
         OnExpired.Broadcast();
         Explode(nullptr, GetActorLocation());
         return;
@@ -106,12 +139,31 @@ void ATorpedoPawn::Tick(float DeltaTime)
     // -- Apply physics velocity --------------------------------------------
     if (PhysicsHandler)
     {
-        const FVector MoveDelta = PhysicsHandler->PhysicsVelocity * DeltaTime;
+        const FVector Vel = PhysicsHandler->PhysicsVelocity;
+        const FVector MoveDelta = Vel * DeltaTime;
+
+        // Log every 0.2s
+        static float DbgT = 0.f;
+        DbgT += DeltaTime;
+        if (DbgT >= 0.2f)
+        {
+            DbgT = 0.f;
+            UE_LOG(LogTemp, Warning,
+                TEXT("[Torpedo] %s | Vel=(%.0f,%.0f,%.0f) Speed=%.0f | ActorFwd=(%.2f,%.2f,%.2f)"),
+                *GetName(),
+                Vel.X, Vel.Y, Vel.Z, Vel.Size(),
+                GetActorForwardVector().X,
+                GetActorForwardVector().Y,
+                GetActorForwardVector().Z);
+        }
+
         FHitResult Hit;
         AddActorWorldOffset(MoveDelta, true, &Hit);
 
         if (Hit.IsValidBlockingHit() && Hit.GetActor())
         {
+            UE_LOG(LogTemp, Warning, TEXT("[Torpedo] %s HIT %s"),
+                *GetName(), *Hit.GetActor()->GetName());
             OnTorpedoHit(TorpedoBody, Hit.GetActor(),
                 Hit.GetComponent(), FVector::ZeroVector, Hit);
         }
@@ -120,7 +172,16 @@ void ATorpedoPawn::Tick(float DeltaTime)
     // -- Update rotation to match velocity direction -----------------------
     if (PhysicsHandler && !PhysicsHandler->PhysicsVelocity.IsNearlyZero(1.f))
     {
-        const FRotator TargetRot = PhysicsHandler->PhysicsVelocity.Rotation();
+        const FVector Vel = PhysicsHandler->PhysicsVelocity;
+
+        // If velocity is pointing mostly backward relative to our facing,
+        // mirror it so the torpedo always rotates as if facing forward.
+        // This means gravity/lateral drift still tilts the nose correctly,
+        // but a negative forward speed doesn't flip the torpedo 180°.
+        const float ForwardDot = FVector::DotProduct(Vel.GetSafeNormal(), GetActorForwardVector());
+        const FVector RotationVel = (ForwardDot >= 0.f) ? Vel : -Vel;
+
+        const FRotator TargetRot = RotationVel.Rotation();
         SetActorRotation(FMath::RInterpTo(GetActorRotation(), TargetRot, DeltaTime, 8.f));
     }
 
@@ -196,64 +257,146 @@ void ATorpedoPawn::OnTorpedoHit(UPrimitiveComponent* HitComp, AActor* OtherActor
 // -----------------------------------------------------------------------------
 //  Explode — override in Blueprint for VFX/SFX
 // -----------------------------------------------------------------------------
-void ATorpedoPawn::Explode_Implementation(AActor* HitActor, const FVector& ImpactLocation)
+void ATorpedoPawn::Explode_Implementation(AActor* DirectHitActor, const FVector& ImpactLocation)
 {
     if (bExploded) return;
     bExploded = true;
 
     const UTorpedoCharacteristics* Stats = GetStats();
 
-    // Notify listeners
-    OnImpact.Broadcast(HitActor, ImpactLocation);
+    UE_LOG(LogTemp, Warning, TEXT("[Torpedo] %s EXPLODE at %s | DirectHit=%s | Radius=%.0f | Damage=%.0f"),
+        *GetName(),
+        *ImpactLocation.ToString(),
+        DirectHitActor ? *DirectHitActor->GetName() : TEXT("None"),
+        Stats ? Stats->ExplosionRadius : 0.f,
+        Stats ? Stats->AttackDamage : 0.f);
 
-    // Apply damage + collision response to direct hit target
-    if (HitActor && Stats)
+    // -- Niagara explosion VFX ---------------------------------------------
+    if (Stats && Stats->ExplosionEffect)
     {
-        // Try to reach the submarine's collision component for proper damage handling
-        if (USubmarineCollisionComponent* ColComp =
-            HitActor->FindComponentByClass<USubmarineCollisionComponent>())
+        UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+            GetWorld(),
+            Stats->ExplosionEffect,
+            ImpactLocation,
+            FRotator::ZeroRotator,
+            FVector(Stats->ExplosionEffectScale),
+            true,   // auto-destroy
+            true,   // auto-activate
+            ENCPoolMethod::None);
+        UE_LOG(LogTemp, Warning, TEXT("[Torpedo] Niagara effect spawned"));
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[Torpedo] No Niagara effect assigned in DA"));
+    }
+
+    // Notify listeners (Blueprint can add SFX / camera shake here)
+
+    // Notify listeners
+    OnImpact.Broadcast(DirectHitActor, ImpactLocation);
+
+    // -- Direct hit --------------------------------------------------------
+    if (DirectHitActor && Stats)
+    {
+        USubmarineCollisionComponent* ColComp =
+            DirectHitActor->FindComponentByClass<USubmarineCollisionComponent>();
+
+        UE_LOG(LogTemp, Warning, TEXT("[Torpedo] Direct hit on %s | ColComp=%s"),
+            *DirectHitActor->GetName(),
+            ColComp ? TEXT("FOUND") : TEXT("NOT FOUND — no USubmarineCollisionComponent!"));
+
+        if (ColComp)
         {
+            UE_LOG(LogTemp, Warning, TEXT("[Torpedo] Applying direct damage %.0f"), Stats->AttackDamage);
             ColComp->ApplyDamage(Stats->AttackDamage, this);
+            UE_LOG(LogTemp, Warning, TEXT("[Torpedo] After damage, target health ratio = %.2f"),
+                ColComp->GetHealthRatio());
+        }
+    }
+
+    // -- Splash / indirect damage ------------------------------------------
+    if (Stats && Stats->ExplosionRadius > 0.f)
+    {
+        TArray<FOverlapResult> Overlaps;
+        FCollisionShape Sphere = FCollisionShape::MakeSphere(Stats->ExplosionRadius);
+        FCollisionQueryParams Params;
+        Params.AddIgnoredActor(this);
+        if (DirectHitActor) Params.AddIgnoredActor(DirectHitActor);
+
+        // Try ECC_Pawn first
+        int32 HitCount = GetWorld()->OverlapMultiByChannel(
+            Overlaps, ImpactLocation, FQuat::Identity, ECC_Pawn, Sphere, Params);
+
+        UE_LOG(LogTemp, Warning,
+            TEXT("[Torpedo] Splash overlap (ECC_Pawn) found %d results in radius %.0f"),
+            Overlaps.Num(), Stats->ExplosionRadius);
+
+        // If nothing found on ECC_Pawn, also try ECC_WorldDynamic as fallback
+        if (Overlaps.Num() == 0)
+        {
+            TArray<FOverlapResult> FallbackOverlaps;
+            GetWorld()->OverlapMultiByChannel(
+                FallbackOverlaps, ImpactLocation, FQuat::Identity,
+                ECC_WorldDynamic, Sphere, Params);
+            UE_LOG(LogTemp, Warning,
+                TEXT("[Torpedo] Splash overlap (ECC_WorldDynamic fallback) found %d results"),
+                FallbackOverlaps.Num());
+            Overlaps.Append(FallbackOverlaps);
         }
 
-        // Splash damage: find all submarines in radius
-        if (Stats->ExplosionRadius > 0.f)
+        // Deduplicate: one damage call per actor
+        TSet<AActor*> DamagedActors;
+
+        for (const FOverlapResult& Overlap : Overlaps)
         {
-            TArray<FOverlapResult> Overlaps;
-            FCollisionShape Sphere = FCollisionShape::MakeSphere(Stats->ExplosionRadius);
-            FCollisionQueryParams Params;
-            Params.AddIgnoredActor(this);
-            Params.AddIgnoredActor(HitActor); // direct hit already handled
+            AActor* SplashTarget = Overlap.GetActor();
+            if (!SplashTarget || SplashTarget == this) continue;
+            if (DamagedActors.Contains(SplashTarget)) continue;
 
-            GetWorld()->OverlapMultiByChannel(Overlaps, ImpactLocation,
-                FQuat::Identity, ECC_Pawn, Sphere, Params);
+            UE_LOG(LogTemp, Warning, TEXT("[Torpedo] Splash candidate: %s (class: %s)"),
+                *SplashTarget->GetName(), *SplashTarget->GetClass()->GetName());
 
-            for (const FOverlapResult& Overlap : Overlaps)
+            USubmarineCollisionComponent* SplashCol =
+                SplashTarget->FindComponentByClass<USubmarineCollisionComponent>();
+
+            if (!SplashCol)
             {
-                AActor* SplashTarget = Overlap.GetActor();
-                if (!SplashTarget) continue;
+                UE_LOG(LogTemp, Warning,
+                    TEXT("[Torpedo]   -> Skipped: no USubmarineCollisionComponent"));
+                continue;
+            }
 
-                if (USubmarineCollisionComponent* SplashCol =
-                    SplashTarget->FindComponentByClass<USubmarineCollisionComponent>())
-                {
-                    const float Dist = FVector::Dist(ImpactLocation, SplashTarget->GetActorLocation());
-                    const float Alpha = 1.f - FMath::Clamp(
-                        Dist / FMath::Max(Stats->ExplosionRadius, 1.f), 0.f, 1.f);
-                    // Lerp between SplashDamageFalloff..1 based on proximity
-                    const float DamageMult = FMath::Lerp(Stats->SplashDamageFalloff, 1.f, Alpha);
-                    SplashCol->ApplyDamage(Stats->AttackDamage * DamageMult, this);
-                }
+            const float Dist = FVector::Dist(ImpactLocation, SplashTarget->GetActorLocation());
+            const float SplashDmg = Stats->ComputeSplashDamage(Dist);
+
+            UE_LOG(LogTemp, Warning,
+                TEXT("[Torpedo]   -> Dist=%.0f SplashDmg=%.1f FiringSubMatch=%s"),
+                Dist, SplashDmg,
+                (SplashTarget == FiringShooter.Get()) ? TEXT("YES") : TEXT("NO"));
+
+            if (SplashDmg > 0.f)
+            {
+                SplashCol->ApplySplashDamage(SplashDmg, this, FiringShooter.Get());
+                DamagedActors.Add(SplashTarget);
+                UE_LOG(LogTemp, Warning,
+                    TEXT("[Torpedo]   -> Applied %.1f splash damage. New health ratio: %.2f"),
+                    SplashDmg, SplashCol->GetHealthRatio());
             }
         }
     }
 
-    // Destroy — Blueprint can delay this via OnImpact event to play FX first
     Destroy();
 }
 
 // -----------------------------------------------------------------------------
 //  Helpers
 // -----------------------------------------------------------------------------
+
+float ATorpedoPawn::GetCurrentSpeed() const
+{
+    return PhysicsHandler ? PhysicsHandler->PhysicsVelocity.Size() : 0.f;
+}
+
 const UTorpedoCharacteristics* ATorpedoPawn::GetStats() const
 {
     if (Characteristics) return Characteristics;

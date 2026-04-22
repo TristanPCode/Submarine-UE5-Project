@@ -2,6 +2,8 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Pawn.h"
+#include "TorpedoCharacteristics.h"
+#include "GameFramework/SpectatorPawn.h"
 #include "TorpedoPawn.generated.h"
 
 class UCameraComponent;
@@ -16,6 +18,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnTorpedoImpact,
 
 // Broadcast when the torpedo's lifetime expires
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnTorpedoExpired);
+
 
 /**
  * ATorpedoPawn
@@ -48,6 +51,9 @@ public:
     virtual void BeginPlay() override;
     virtual void Tick(float DeltaTime) override;
     virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
+    UStaticMeshComponent* GetTorpedoBody() const { return TorpedoBody; }
+    float GetCurrentSpeed() const;
+
 
     // -- Setup (called by SubmarineTorpedoComponent after deferred spawn) ---
 
@@ -81,13 +87,16 @@ public:
     UPROPERTY(BlueprintAssignable, Category = "Torpedo|Events")
     FOnTorpedoExpired OnExpired;
 
-    // -- Camera state ------------------------------------------------------
+    // -- Camera ------------------------------------------------------------
 
     UFUNCTION(BlueprintCallable, Category = "Torpedo|Camera")
     void ActivatePOVCamera();
 
     UFUNCTION(BlueprintCallable, Category = "Torpedo|Camera")
     void ActivateThirdPersonCamera();
+
+    UCameraComponent* GetPOVCamera()         const { return POVCamera; }
+    UCameraComponent* GetThirdPersonCamera() const { return ThirdPersonCamera; }
 
 protected:
     // -- Components --------------------------------------------------------
@@ -117,7 +126,7 @@ protected:
     /** Called when the torpedo impacts something. Override in BP for FX. */
     UFUNCTION(BlueprintNativeEvent, Category = "Torpedo")
     void Explode(AActor* HitActor, const FVector& ImpactLocation);
-    virtual void Explode_Implementation(AActor* HitActor, const FVector& ImpactLocation);
+    virtual void Explode_Implementation(AActor* DirectHitActor, const FVector& ImpactLocation);
 
 private:
     // -- Lifetime ----------------------------------------------------------

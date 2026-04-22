@@ -28,12 +28,31 @@ void USubmarineCharacteristics::PostInitProperties()
 
     if (CollisionBounceTable.Num() == 0)
     {
-        CollisionBounceTable.Add({ ESubmarineCollisionType::Landscape,      400.f, 0.3f, false, 0.3f, 0.3f, 0.1f, 1 });
-        CollisionBounceTable.Add({ ESubmarineCollisionType::StaticObstacle, 800.f, 0.5f, false, 0.5f, 0.5f, 0.2f, 2 });
-        CollisionBounceTable.Add({ ESubmarineCollisionType::OtherSubmarine, 900.f, 0.5f, false, 0.5f, 0.5f, 0.2f, 2 });
-        CollisionBounceTable.Add({ ESubmarineCollisionType::Torpedo,        600.f, 0.4f, false, 0.4f, 0.4f, 0.1f, 1 });
-        CollisionBounceTable.Add({ ESubmarineCollisionType::TriggerZone,      0.f, 0.0f, false, 0.0f, 0.0f, 0.0f, 0 });
-        CollisionBounceTable.Add({ ESubmarineCollisionType::Default,        500.f, 0.0f, false, 0.0f, 0.0f, 0.0f, 0 });
+        // Landscape: softer bounce, small chip damage
+        CollisionBounceTable.Add({ ESubmarineCollisionType::Landscape,
+            /*BounceForce*/      400.f,
+            /*RotationFactor*/   0.3f,
+            /*bSplitFactors*/    false,
+            /*YawFactor*/        0.3f,
+            /*PitchFactor*/      0.1f,
+            /*SpeedLost*/        0.3f,
+            /*SpeedPenalty*/     1,
+            /*CollisionDamage*/  5.f });
+
+        // Static obstacles: medium bounce, moderate damage
+        CollisionBounceTable.Add({ ESubmarineCollisionType::StaticObstacle, 800.f, 0.5f, false, 0.5f, 0.5f, 0.2f, 2, 10.f });
+
+        // Other submarines: strong bounce, moderate damage
+        CollisionBounceTable.Add({ ESubmarineCollisionType::OtherSubmarine, 900.f, 0.5f, false, 0.5f, 0.5f, 0.2f, 2, 15.f });
+
+        // Torpedo: force only — damage handled by torpedo's AttackDamage
+        CollisionBounceTable.Add({ ESubmarineCollisionType::Torpedo, 600.f, 0.4f, false, 0.4f, 0.4f, 0.1f, 1, 0.f });
+
+        // Trigger zones: no bounce, no damage
+        CollisionBounceTable.Add({ ESubmarineCollisionType::TriggerZone, 0.f, 0.0f, false, 0.0f, 0.0f, 0.0f, 0, 0.f });
+
+        // Default fallback
+        CollisionBounceTable.Add({ ESubmarineCollisionType::Default, 500.f, 0.0f, false, 0.0f, 0.0f, 0.0f, 0, 0.f });
     }
 }
 

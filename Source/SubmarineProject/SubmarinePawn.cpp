@@ -4,6 +4,8 @@
 #include "SubmarineCharacteristics.h"
 #include "SubmarineCollisionComponent.h"
 #include "SubmarinePhysicsComponent.h"
+#include "TorpedoPawn.h"
+#include "CameraBlendSettings.h"
 #include "Camera/CameraComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/FloatingPawnMovement.h"
@@ -123,6 +125,7 @@ void ASubmarinePawn::BeginPlay()
 // -----------------------------------------------------------------------------
 void ASubmarinePawn::Tick(float DeltaTime)
 {
+    if (bDead) return;
     Super::Tick(DeltaTime);
 
     TickLinearMovement(DeltaTime);
@@ -145,6 +148,44 @@ void ASubmarinePawn::Tick(float DeltaTime)
         TickPeriscopeCamera();
     else if (CameraState == ESubmarineCameraState::ThirdPerson)
         TickThirdPersonCamera();
+}
+
+// -----------------------------------------------------------------------------
+//  FreezeOnDeath
+// -----------------------------------------------------------------------------
+
+void ASubmarinePawn::FreezeOnDeath()
+{
+    if (bDead) return;
+    bDead = true;
+
+    // Stop all movement immediately
+    CurrentLinearSpeed = 0.f;
+    CurrentVerticalSpeed = 0.f;
+    CurrentYawSpeed = 0.f;
+    ExternalLinearVelocity = 0.f;
+    ExternalVerticalVelocity = 0.f;
+    ExternalYawVelocity = 0.f;
+    ExternalPitchVelocity = 0.f;
+
+    if (PhysicsHandler)
+    {
+        PhysicsHandler->PhysicsVelocity = FVector::ZeroVector;
+        PhysicsHandler->TargetLinearSpeed = 0.f;
+        PhysicsHandler->TargetVerticalSpeed = 0.f;
+    }
+
+    // Detach the controller — this stops all Enhanced Input events from firing
+    // and lets the PlayerCameraManager accept manual position overrides
+    // (which is what DeathSequenceComponent::ApplyViewToController needs).
+    if (AController* C = GetController())
+        C->UnPossess();
+
+    // Disable this actor's tick entirely — no more movement, physics, or input
+    SetActorTickEnabled(false);
+
+    UE_LOG(LogTemp, Log, TEXT("[SubmarinePawn] FreezeOnDeath: '%s' frozen and unpossessed"),
+        *GetName());
 }
 
 // -----------------------------------------------------------------------------
@@ -1060,6 +1101,9 @@ void ASubmarinePawn::RegisterHit(AActor* OtherActor, const FHitResult& Hit)
 {
     const USubmarineCharacteristics* Stats = GetStats();
     if (!OtherActor || !IsValid(OtherActor) || !Stats->bEnableAntiStuckPhysics) return;
+
+    // Never track torpedoes in the anti-stuck system
+    if (OtherActor->IsA<ATorpedoPawn>()) return;
 
     const float Now = GetWorld()->GetTimeSeconds();
 

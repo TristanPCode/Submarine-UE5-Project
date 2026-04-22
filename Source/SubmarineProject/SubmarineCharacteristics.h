@@ -2,7 +2,9 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DataAsset.h"
+#include "NiagaraSystem.h"
 #include "SubmarineCharacteristics.generated.h"
+
 
 
 // ---------------------------------------------
@@ -91,6 +93,14 @@ struct FCollisionBounceEntry
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Collision",
         meta = (ClampMin = "0", ClampMax = "6"))
     int32 SpeedStatePenalty = 0;
+
+    /**
+     * Damage dealt to this submarine when colliding with this object type.
+     * 0 = no collision damage. Applied once per hit event.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Collision",
+        meta = (ClampMin = "0.0"))
+    float CollisionDamage = 0.f;
 };
 
 // ---------------------------------------------
@@ -283,6 +293,72 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Health",
         meta = (ClampMin = "0.0"))
     float DamageResistance = 1.f;
+
+    /**
+     * If true, this submarine cannot take splash damage from explosions
+     * it is inside the radius of, regardless of the torpedo DA setting.
+     * Useful for player submarines that should feel "protected" from their
+     * own torpedo splash even when bCanSelfDamage is true on the torpedo.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Health")
+    bool bImmuneToOwnTorpedoSplash = true;
+
+    // -- Death Explosion ---------------------------
+
+    /**
+     * Niagara particle system spawned when the submarine is destroyed.
+     * Assign your NS_SubmarineExplosion asset here.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Death|VFX")
+    TObjectPtr<UNiagaraSystem> DeathExplosionEffect;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Death|VFX",
+        meta = (ClampMin = "0.01"))
+    float DeathExplosionEffectScale = 2.f;
+
+    /** Radius of the death explosion splash damage (cm). 0 = no splash. */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Death|Damage",
+        meta = (ClampMin = "0.0"))
+    float DeathExplosionRadius = 600.f;
+
+    /** Total damage the death explosion can deal (distributed by splash falloff) */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Death|Damage")
+    float DeathExplosionDamage = 150.f;
+
+    /**
+     * Damage multiplier at the CENTER of the death explosion (0..1).
+     * 1.0 = full DeathExplosionDamage at the epicentre.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Death|Damage",
+        meta = (ClampMin = "0.0", ClampMax = "1.0"))
+    float DeathSplashDamageMax = 1.0f;
+
+    /**
+     * Damage multiplier at the EDGE of the death explosion (0..1).
+     * Clamped to <= DeathSplashDamageMax at runtime.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Death|Damage",
+        meta = (ClampMin = "0.0", ClampMax = "1.0"))
+    float DeathSplashDamageMin = 0.1f;
+
+    /** Returns safe min (never > max) */
+    UFUNCTION(BlueprintPure, Category = "Submarine|Death")
+    float GetSafeDeathSplashMin() const
+    {
+        return FMath::Min(DeathSplashDamageMin, DeathSplashDamageMax);
+    }
+
+    /** Computes death splash damage at a given distance from the explosion */
+    UFUNCTION(BlueprintPure, Category = "Submarine|Death")
+    float ComputeDeathSplashDamage(float DistanceFromExplosion) const
+    {
+        if (DeathExplosionRadius <= 0.f || DistanceFromExplosion >= DeathExplosionRadius)
+            return 0.f;
+        const float Alpha = 1.f - FMath::Clamp(
+            DistanceFromExplosion / DeathExplosionRadius, 0.f, 1.f);
+        return DeathExplosionDamage *
+            FMath::Lerp(GetSafeDeathSplashMin(), DeathSplashDamageMax, Alpha);
+    }
 
     // -- Torpedo -----------------------------------------------------------
 
@@ -481,6 +557,19 @@ public:
         meta = (ClampMin = "0.0", EditCondition = "bEnableDepthPhysics"))
     float BuoyancyDepthNerfCoefficient = 0.000001f;
 
+    // -- Debug --------------------------------
+
+    /**
+     * If true, SubmarinePhysicsComponent prints detailed force logs every 2s.
+     * Disable in production to keep the Output Log clean.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Physics|Debug")
+    bool bEnablePhysicsLogs = false;
+
+    /** Frequency (in seconds) of the Physics log */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Physics|Debug", meta = (ClampMin = "0.0", EditCondition = "bEnablePhysicsLogs"))
+    float PhysicsLogFrequency = 2.0f;
+
     // -- Camera (POV) -----------------------------
 
     /** Hold duration in seconds to trigger camera switch */
@@ -550,6 +639,23 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera|ThirdPerson",
         meta = (ClampMin = "0.0", ClampMax = "89.0"))
     float ThirdPersonMaxPitch = 80.f;
+
+    // -- Spectator ---------------------------------
+
+    /**
+     * If true, the spectator camera blends smoothly between targets.
+     * If false, cuts instantly.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Spectator")
+    bool bSpectatorBlendCamera = true;
+
+    /**
+     * Speed of the spectator camera position lerp (higher = faster blend).
+     * Only used when bSpectatorBlendCamera = true.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Spectator",
+        meta = (ClampMin = "0.1", EditCondition = "bSpectatorBlendCamera"))
+    float SpectatorBlendSpeed = 5.f;
 
     // -- Helpers (callable from C++ & BP) ------
 

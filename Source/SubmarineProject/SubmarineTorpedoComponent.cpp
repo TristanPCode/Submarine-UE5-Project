@@ -23,6 +23,8 @@ void USubmarineTorpedoComponent::BeginPlay()
     CurrentNormalTorpedoes = NormalTorpedoCapacity;
     CurrentSpecialTorpedoes = SpecialTorpedoCapacity;
 
+    bWasOnCooldown = false;
+
     // Broadcast initial state
     OnAmmoChanged.Broadcast(CurrentNormalTorpedoes, CurrentSpecialTorpedoes);
 }
@@ -35,44 +37,139 @@ void USubmarineTorpedoComponent::TickComponent(float DeltaTime, ELevelTick TickT
 {
     Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-    // -- Shared fire cooldown ----------------------------------------------
+    // -- Clean up destroyed torpedoes from active list ---------------------
+    ActiveTorpedoes.RemoveAll([](const TObjectPtr<ATorpedoPawn>& T)
+        {
+            return !IsValid(T);
+        });
+
+    // -- Fire cooldown -----------------------------------------------------
     if (FireCooldownRemaining > 0.f)
+    {
+        bWasOnCooldown = true;
         FireCooldownRemaining = FMath::Max(0.f, FireCooldownRemaining - DeltaTime);
 
-    // -- Normal torpedo reload ---------------------------------------------
-    // Reload one torpedo at a time. Timer starts automatically when below capacity.
-    if (CurrentNormalTorpedoes < NormalTorpedoCapacity)
+        if (FireCooldownRemaining <= 0.f)
+        {
+            // Edge: cooldown just expired this tick
+            OnFireCooldownComplete.Broadcast();
+
+            if (HasNormalTorpedo() || HasSpecialTorpedo())
+                OnReadyToFire.Broadcast();
+
+            bWasOnCooldown = false;
+        }
+    }
+
+    // -- Reload ------------------------------------------------------------
+    switch (ReloadMode)
     {
-        if (!bReloading)
-        {
-            // Begin a new reload cycle
-            bReloading = true;
-            ReloadTimeRemaining = ReloadNormalTorpedoCooldown;
-        }
-        else
-        {
-            ReloadTimeRemaining -= DeltaTime;
-            if (ReloadTimeRemaining <= 0.f)
-            {
-                CurrentNormalTorpedoes = FMath::Min(CurrentNormalTorpedoes + 1,
-                    NormalTorpedoCapacity);
-                bReloading = false;
-                ReloadTimeRemaining = 0.f;
+    case ETorpedoReloadMode::Progressive:
+        TickProgressiveReload(DeltaTime);
+        break;
 
-                OnAmmoChanged.Broadcast(CurrentNormalTorpedoes, CurrentSpecialTorpedoes);
-                OnReloadComplete.Broadcast();
+    case ETorpedoReloadMode::Full:
+        TickFullReload(DeltaTime);
+        break;
+    }
+}
+// -----------------------------------------------------------------------------
+//  Progressive reload — one torpedo at a time, runs while below capacity
+// -----------------------------------------------------------------------------
+void USubmarineTorpedoComponent::TickProgressiveReload(float DeltaTime)
+{
+    if (CurrentNormalTorpedoes >= NormalTorpedoCapacity)
+    {
+        bReloading = false;
+        ReloadTimeRemaining = 0.f;
+        return;
+    }
 
-                UE_LOG(LogTemp, Log, TEXT("[TorpedoComp] Reload complete. Normal=%d/%d"),
-                    CurrentNormalTorpedoes, NormalTorpedoCapacity);
-            }
-        }
+    if (!bReloading)
+    {
+        bReloading = true;
+        ReloadTimeRemaining = ProgressiveReloadCooldown;
     }
     else
     {
-        // Full — reset reload state
+        ReloadTimeRemaining -= DeltaTime;
+        if (ReloadTimeRemaining <= 0.f)
+        {
+            CurrentNormalTorpedoes = FMath::Min(CurrentNormalTorpedoes + 1, NormalTorpedoCapacity);
+            bReloading = false;
+            ReloadTimeRemaining = 0.f;
+
+            OnAmmoChanged.Broadcast(CurrentNormalTorpedoes, CurrentSpecialTorpedoes);
+            OnProgressiveReloadComplete.Broadcast();
+
+            // If we're now at capacity, also fire OnFullReloadComplete for convenience
+            if (CurrentNormalTorpedoes >= NormalTorpedoCapacity)
+                OnFullReloadComplete.Broadcast();
+
+            // If fire cooldown is also done, we're ready
+            if (CanFire())
+                OnReadyToFire.Broadcast();
+
+            UE_LOG(LogTemp, Log, TEXT("[TorpedoComp] Progressive reload: %d/%d"),
+                CurrentNormalTorpedoes, NormalTorpedoCapacity);
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+//  Full reload — starts ONLY at 0, restores all at once
+// -----------------------------------------------------------------------------
+void USubmarineTorpedoComponent::TickFullReload(float DeltaTime)
+{
+    // Only start reload when completely empty
+    if (CurrentNormalTorpedoes > 0)
+    {
         bReloading = false;
         ReloadTimeRemaining = 0.f;
+        return;
     }
+
+    if (!bReloading)
+    {
+        bReloading = true;
+        ReloadTimeRemaining = FullReloadCooldown;
+        UE_LOG(LogTemp, Log, TEXT("[TorpedoComp] Full reload started (%.1fs)"), FullReloadCooldown);
+    }
+    else
+    {
+        ReloadTimeRemaining -= DeltaTime;
+        if (ReloadTimeRemaining <= 0.f)
+        {
+            CurrentNormalTorpedoes = NormalTorpedoCapacity;
+            bReloading = false;
+            ReloadTimeRemaining = 0.f;
+
+            OnAmmoChanged.Broadcast(CurrentNormalTorpedoes, CurrentSpecialTorpedoes);
+            OnFullReloadComplete.Broadcast();
+
+            if (CanFire())
+                OnReadyToFire.Broadcast();
+
+            UE_LOG(LogTemp, Log, TEXT("[TorpedoComp] Full reload complete: %d/%d"),
+                CurrentNormalTorpedoes, NormalTorpedoCapacity);
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+//  GetReloadRatio
+// -----------------------------------------------------------------------------
+float USubmarineTorpedoComponent::GetReloadRatio() const
+{
+    if (!bReloading) return 1.f;
+
+    const float Total = (ReloadMode == ETorpedoReloadMode::Progressive)
+        ? ProgressiveReloadCooldown
+        : FullReloadCooldown;
+
+    return (Total > 0.f)
+        ? FMath::Clamp(1.f - ReloadTimeRemaining / Total, 0.f, 1.f)
+        : 1.f;
 }
 
 // -----------------------------------------------------------------------------
@@ -80,6 +177,10 @@ void USubmarineTorpedoComponent::TickComponent(float DeltaTime, ELevelTick TickT
 // -----------------------------------------------------------------------------
 ATorpedoPawn* USubmarineTorpedoComponent::FireNormalTorpedo()
 {
+    // If submarine is dead, do not fire
+    if (ASubmarinePawn* OwnerSub = Cast<ASubmarinePawn>(GetOwner()))
+        if (OwnerSub->bDead) return nullptr;
+
     if (!CanFire())
     {
         UE_LOG(LogTemp, Warning, TEXT("[TorpedoComp] Cannot fire — cooldown %.2fs remaining"),
@@ -103,23 +204,38 @@ ATorpedoPawn* USubmarineTorpedoComponent::FireNormalTorpedo()
 
     --CurrentNormalTorpedoes;
     FireCooldownRemaining = FireCooldown;
+    bWasOnCooldown = true;
+
+    ActiveTorpedoes.Add(Torpedo);
 
     OnAmmoChanged.Broadcast(CurrentNormalTorpedoes, CurrentSpecialTorpedoes);
     OnTorpedoFired.Broadcast(
         NormalTorpedoCharacteristics ? NormalTorpedoCharacteristics->TorpedoType : ETorpedoType::Normal,
         Torpedo);
 
-    UE_LOG(LogTemp, Log, TEXT("[TorpedoComp] Normal torpedo fired. Remaining: %d/%d"),
+    // In Full mode: start reload immediately if now at 0
+    if (ReloadMode == ETorpedoReloadMode::Full && CurrentNormalTorpedoes == 0)
+    {
+        bReloading = false; // will be picked up next tick
+    }
+
+    UE_LOG(LogTemp, Log, TEXT("[TorpedoComp] Normal fired. Remaining: %d/%d"),
         CurrentNormalTorpedoes, NormalTorpedoCapacity);
 
     return Torpedo;
 }
+
+
 
 // -----------------------------------------------------------------------------
 //  FireSpecialTorpedo
 // -----------------------------------------------------------------------------
 ATorpedoPawn* USubmarineTorpedoComponent::FireSpecialTorpedo()
 {
+    // If submarine is dead, do not fire
+    if (ASubmarinePawn* OwnerSub = Cast<ASubmarinePawn>(GetOwner()))
+        if (OwnerSub->bDead) return nullptr;
+
     if (!CanFire())
     {
         UE_LOG(LogTemp, Warning, TEXT("[TorpedoComp] Cannot fire — cooldown %.2fs remaining"),
@@ -143,13 +259,16 @@ ATorpedoPawn* USubmarineTorpedoComponent::FireSpecialTorpedo()
 
     --CurrentSpecialTorpedoes;
     FireCooldownRemaining = FireCooldown;
+    bWasOnCooldown = true;
+
+    ActiveTorpedoes.Add(Torpedo);
 
     OnAmmoChanged.Broadcast(CurrentNormalTorpedoes, CurrentSpecialTorpedoes);
     OnTorpedoFired.Broadcast(
         SpecialTorpedoCharacteristics ? SpecialTorpedoCharacteristics->TorpedoType : ETorpedoType::Heavy,
         Torpedo);
 
-    UE_LOG(LogTemp, Log, TEXT("[TorpedoComp] Special torpedo fired. Remaining: %d/%d"),
+    UE_LOG(LogTemp, Log, TEXT("[TorpedoComp] Special fired. Remaining: %d/%d"),
         CurrentSpecialTorpedoes, SpecialTorpedoCapacity);
 
     return Torpedo;
@@ -200,23 +319,51 @@ ATorpedoPawn* USubmarineTorpedoComponent::SpawnTorpedo(
     // -- Hand over the DA before BeginPlay runs ----------------------------
     Torpedo->SetCharacteristics(TorpedoDA);
 
-    // -- Compute initial world velocity ------------------------------------
-    // Base: submarine's current linear speed along its forward axis
-    const FVector SubForwardVel =
-        OwnerSub->GetActorForwardVector() * OwnerSub->CurrentLinearSpeed;
-
-    // Add the torpedo's own InitialSpeedOffset along the submarine's forward vector
-    const float SpeedOffset = TorpedoDA ? TorpedoDA->InitialSpeedOffset : 1500.f;
-    const FVector TorpedoKick = OwnerSub->GetActorForwardVector() * SpeedOffset;
-
-    const FVector InitialVelocity = SubForwardVel + TorpedoKick;
-    Torpedo->SetInitialVelocity(InitialVelocity);
-
     // -- Associate the owner so the torpedo ignores it
     //  The torpedo checks if it's its owner
     Torpedo->FiringShooter = OwnerSub;
 
+    // -- Initial velocity --------------------------------------------------
+    // We use ONLY the forward axis speed scalar, not the full 3D velocity.
+    // This avoids the diagonal bleed when the submarine is pitched/yawed.
+    //
+    // CurrentLinearSpeed is the signed scalar along the submarine's forward axis:
+    //   > 0 = moving forward
+    //   < 0 = moving backward (torpedo will initially travel backward,
+    //          then its engine accelerates it forward naturally)
+    //
+    // The torpedo always FACES forward (SpawnRotation = OwnerSub->GetActorRotation()),
+    // so negative initial speed means it briefly flies tail-first before the
+    // engine wins — exactly the behaviour you asked for.
+
+    const float SpeedOffset = TorpedoDA ? TorpedoDA->InitialSpeedOffset : 1500.f;
+
+    // Pure forward-axis scalar contribution from submarine movement
+    const float SubLinearContribution = OwnerSub->CurrentLinearSpeed;
+
+    // Total initial speed along the torpedo's (= submarine's) forward vector
+    const float TotalInitialSpeed = SubLinearContribution + SpeedOffset;
+
+    // Apply purely along forward — no lateral/vertical bleed
+    const FVector InitialVelocity = OwnerSub->GetActorForwardVector() * TotalInitialSpeed;
+
+    Torpedo->SetInitialVelocity(InitialVelocity);
+
     // -- Finish deferred spawn ---------------------------------------------
+
+    // Set FiringSubmarine BEFORE FinishSpawning so BeginPlay sees it
+    Torpedo->FiringShooter = OwnerSub;
+
+    // Set ignore before FinishSpawning triggers BeginPlay and the first tick
+    if (UStaticMeshComponent* TBody = Torpedo->GetTorpedoBody())
+        TBody->IgnoreActorWhenMoving(OwnerSub, true);
+
+    // Owner ignores the torpedo for movement sweeps
+    TArray<UPrimitiveComponent*> OwnerPrims;
+    OwnerSub->GetComponents<UPrimitiveComponent>(OwnerPrims);
+    for (UPrimitiveComponent* Prim : OwnerPrims)
+        Prim->IgnoreActorWhenMoving(Torpedo, true);
+
     Torpedo->FinishSpawning(FTransform(SpawnRotation, SpawnLocation));
 
     return Torpedo;

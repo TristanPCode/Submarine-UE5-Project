@@ -51,7 +51,7 @@ void USubmarinePhysicsComponent::TickComponent(float DeltaTime, ELevelTick TickT
     // Debug log every 2 seconds
     static float LogTimer = 0.f;
     LogTimer += DeltaTime;
-    if (LogTimer >= 2.f)
+    if (LogTimer >= Stats->PhysicsLogFrequency && Stats->bEnablePhysicsLogs)
     {
         LogTimer = 0.f;
         UE_LOG(LogTemp, Warning, TEXT("========= [PhysicsComponent] ========="));

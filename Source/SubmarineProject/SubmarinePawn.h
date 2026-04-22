@@ -13,6 +13,7 @@ class UInputMappingContext;
 class UInputAction;
 class USubmarineCollisionComponent;
 class USubmarinePhysicsComponent;
+class UCameraBlendSettings;
 struct FInputActionValue;
 
 // -----------------------------------------------------------------------------
@@ -36,6 +37,21 @@ public:
     void SetExternalVerticalVelocity(float V) { ExternalVerticalVelocity = V; }
     void SetExternalYawVelocity(float V) { ExternalYawVelocity = V; }
     void SetExternalPitchVelocity(float V) { ExternalPitchVelocity = V; }
+
+    // True once this submarine has been killed.
+    // Set by the GameMode via FreezeOnDeath() before the death sequence starts.
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Submarine|State")
+    bool bDead = false;
+
+    /**
+     * Called by the GameMode immediately when this submarine dies.
+     * - Unpossesses the controller (stops all input).
+     * - Disables tick so movement/physics stop.
+     * - Fires are blocked because bDead is checked in FireNormalTorpedo /
+     *   FireSpecialTorpedo on the TorpedoComponent.
+     */
+    UFUNCTION(BlueprintCallable, Category = "Submarine|State")
+    void FreezeOnDeath();
 
 protected:
     virtual void BeginPlay() override;
@@ -141,6 +157,9 @@ public:
     /** Switch camera from external code (spectator/replay system) */
     UFUNCTION(BlueprintCallable, Category = "Submarine|Camera")
     void ActivateCamera(ESubmarineCameraState NewState);
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Submarine|Camera")
+    TObjectPtr<UCameraBlendSettings> CameraBlendSettings;
 
 private:
     // -- Components --------------------------------------------------------

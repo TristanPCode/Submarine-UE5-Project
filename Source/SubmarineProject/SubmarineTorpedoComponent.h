@@ -8,18 +8,57 @@
 class ATorpedoPawn;
 class USubmarineCharacteristics;
 
-// Fired when a torpedo is launched
+// -----------------------------------------------------------------------------
+//  Reload mode
+// -----------------------------------------------------------------------------
+UENUM(BlueprintType)
+enum class ETorpedoReloadMode : uint8
+{
+    /**
+     * One torpedo reloads at a time using ProgressiveReloadCooldown.
+     * Reload runs continuously whenever below capacity.
+     */
+    Progressive,
+
+    /**
+     * All torpedoes reload at once using FullReloadCooldown.
+     * Timer only starts when count reaches 0.
+     */
+    Full
+};
+
+// -----------------------------------------------------------------------------
+//  Delegates
+// -----------------------------------------------------------------------------
+
+/** A torpedo was fired */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnTorpedoFired,
     ETorpedoType, TorpedoType,
     ATorpedoPawn*, TorpedoActor);
 
-// Fired when normal torpedo count changes (for UI)
+/** Ammo count changed (fired or reloaded) */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnAmmoChanged,
     int32, NormalCount,
     int32, SpecialCount);
 
-// Fired when reload completes
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnReloadComplete);
+/** One normal torpedo was reloaded (Progressive mode) */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnProgressiveReloadComplete);
+
+/** All normal torpedoes reloaded at once (Full mode) */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnFullReloadComplete);
+
+/** Shared fire cooldown just reached 0 */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnFireCooldownComplete);
+
+/**
+ * Shared fire cooldown reached 0 AND at least one torpedo type is available.
+ * Use this for the "ready to fire" HUD indicator.
+ */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnReadyToFire);
+
+// -----------------------------------------------------------------------------
+//  Component
+// -----------------------------------------------------------------------------
 
 /**
  * USubmarineTorpedoComponent
@@ -51,109 +90,142 @@ public:
     virtual void TickComponent(float DeltaTime, ELevelTick TickType,
         FActorComponentTickFunction* ThisTickFunction) override;
 
-    // -- Blueprint class references (set in BP) ----------------------------
+    // -------------------------------------------------------------------------
+    //  Blueprint class references
+    // -------------------------------------------------------------------------
 
-    /**
-     * Blueprint subclass of ATorpedoPawn used for normal torpedoes.
-     * Assign BP_TorpedoNormal (or Light/Heavy variant) here in the submarine Blueprint.
-     */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Torpedo|Ammo")
     TSubclassOf<ATorpedoPawn> NormalTorpedoBlueprintClass;
 
-    /**
-     * Blueprint subclass of ATorpedoPawn used for special torpedoes.
-     */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Torpedo|Ammo")
     TSubclassOf<ATorpedoPawn> SpecialTorpedoBlueprintClass;
 
-    // -- DataAsset references (set in BP) ----------------------------------
+    // -------------------------------------------------------------------------
+    //  DataAsset references
+    // -------------------------------------------------------------------------
 
-    /** Characteristics for normal torpedoes */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Torpedo|Ammo")
     TObjectPtr<UTorpedoCharacteristics> NormalTorpedoCharacteristics;
 
-    /** Characteristics for special torpedoes */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Torpedo|Ammo")
     TObjectPtr<UTorpedoCharacteristics> SpecialTorpedoCharacteristics;
 
-    // -- Ammo state (read-only from Blueprint) -----------------------------
+    // -------------------------------------------------------------------------
+    //  Ammo state
+    // -------------------------------------------------------------------------
 
-    /** Current number of normal torpedoes available */
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Torpedo|Ammo")
     int32 CurrentNormalTorpedoes = 0;
 
-    /** Maximum normal torpedo capacity */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Torpedo|Ammo",
         meta = (ClampMin = "0"))
-    int32 NormalTorpedoCapacity = 4;
+    int32 NormalTorpedoCapacity = 6;
 
-    /** Current number of special torpedoes available */
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Torpedo|Ammo")
     int32 CurrentSpecialTorpedoes = 0;
 
-    /** Maximum special torpedo capacity */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Torpedo|Ammo",
         meta = (ClampMin = "0"))
-    int32 SpecialTorpedoCapacity = 2;
+    int32 SpecialTorpedoCapacity = 3;
 
-    // -- Cooldowns (set in submarine DA or directly here) ------------------
+    // -------------------------------------------------------------------------
+    //  Reload mode
+    // -------------------------------------------------------------------------
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Torpedo|Reload")
+    ETorpedoReloadMode ReloadMode = ETorpedoReloadMode::Progressive;
 
     /**
-     * Shared fire cooldown in seconds.
-     * Applies after firing ANY torpedo type — you cannot fire normal then
-     * immediately fire special during this window.
+     * [Progressive mode] Time in seconds to reload ONE normal torpedo.
+     * Runs continuously while below capacity.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Torpedo|Reload",
+        meta = (ClampMin = "0.1", EditCondition = "ReloadMode == ETorpedoReloadMode::Progressive"))
+    float ProgressiveReloadCooldown = 8.f;
+
+    /**
+     * [Full mode] Time in seconds to reload ALL normal torpedoes at once.
+     * Timer starts only when count reaches 0.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Torpedo|Reload",
+        meta = (ClampMin = "0.1", EditCondition = "ReloadMode == ETorpedoReloadMode::Full"))
+    float FullReloadCooldown = 15.f;
+
+    // -------------------------------------------------------------------------
+    //  Fire cooldown
+    // -------------------------------------------------------------------------
+
+    /**
+     * Shared cooldown between ALL torpedo types.
+     * Neither normal nor special can fire during this window.
      */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Torpedo|Cooldowns",
         meta = (ClampMin = "0.0"))
     float FireCooldown = 2.f;
 
-    /**
-     * Time in seconds to reload ONE normal torpedo.
-     * Reload is continuous: when a slot is empty it starts filling.
-     * Special torpedoes never reload.
-     */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Torpedo|Cooldowns",
-        meta = (ClampMin = "0.1"))
-    float ReloadNormalTorpedoCooldown = 8.f;
+    // -------------------------------------------------------------------------
+    //  Timers (read-only, for UI progress bars)
+    // -------------------------------------------------------------------------
 
-    // -- Timers (read-only, useful for UI progress bars) -------------------
-
-    /** Remaining fire cooldown (0 = ready to fire) */
+    /** Remaining shared fire cooldown (0 = can fire) */
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Torpedo|Cooldowns")
     float FireCooldownRemaining = 0.f;
 
-    /** Remaining reload time for the next normal torpedo slot */
+    /** Remaining reload time (meaning depends on ReloadMode) */
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Torpedo|Cooldowns")
     float ReloadTimeRemaining = 0.f;
 
-    // -- Firing API --------------------------------------------------------
+    // -------------------------------------------------------------------------
+    //  Active torpedoes (read-only, used by spectator system)
+    // -------------------------------------------------------------------------
 
-    /**
-     * Fire a normal torpedo. Returns the spawned pawn (or nullptr if failed).
-     * Failure reasons: no ammo, cooldown active, no Blueprint class assigned.
-     */
+    /** All currently live torpedoes fired by this submarine */
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Torpedo|State")
+    TArray<TObjectPtr<ATorpedoPawn>> ActiveTorpedoes;
+
+    // -------------------------------------------------------------------------
+    //  Firing API
+    // -------------------------------------------------------------------------
+
     UFUNCTION(BlueprintCallable, Category = "Torpedo")
     ATorpedoPawn* FireNormalTorpedo();
 
-    /**
-     * Fire a special torpedo. Returns the spawned pawn (or nullptr if failed).
-     */
     UFUNCTION(BlueprintCallable, Category = "Torpedo")
     ATorpedoPawn* FireSpecialTorpedo();
 
-    /** True if the shared fire cooldown has expired */
     UFUNCTION(BlueprintPure, Category = "Torpedo")
     bool CanFire() const { return FireCooldownRemaining <= 0.f; }
 
-    /** True if there are normal torpedoes in stock */
     UFUNCTION(BlueprintPure, Category = "Torpedo")
     bool HasNormalTorpedo() const { return CurrentNormalTorpedoes > 0; }
 
-    /** True if there are special torpedoes in stock */
     UFUNCTION(BlueprintPure, Category = "Torpedo")
     bool HasSpecialTorpedo() const { return CurrentSpecialTorpedoes > 0; }
 
-    // -- Events (bind in Blueprint for HUD / feedback) --------------------
+    UFUNCTION(BlueprintPure, Category = "Torpedo")
+    bool IsReadyToFire() const { return CanFire() && (HasNormalTorpedo() || HasSpecialTorpedo()); }
+
+    /**
+     * 0..1 ratio of fire cooldown progress (1 = fully ready, 0 = just fired).
+     * Safe to use directly as a progress bar value.
+     */
+    UFUNCTION(BlueprintPure, Category = "Torpedo")
+    float GetFireCooldownRatio() const
+    {
+        return (FireCooldown > 0.f)
+            ? FMath::Clamp(1.f - FireCooldownRemaining / FireCooldown, 0.f, 1.f)
+            : 1.f;
+    }
+
+    /**
+     * 0..1 ratio of reload progress (1 = reload complete / not reloading).
+     */
+    UFUNCTION(BlueprintPure, Category = "Torpedo")
+    float GetReloadRatio() const;
+
+    // -------------------------------------------------------------------------
+    //  Delegates
+    // -------------------------------------------------------------------------
 
     UPROPERTY(BlueprintAssignable, Category = "Torpedo|Events")
     FOnTorpedoFired OnTorpedoFired;
@@ -162,16 +234,30 @@ public:
     FOnAmmoChanged OnAmmoChanged;
 
     UPROPERTY(BlueprintAssignable, Category = "Torpedo|Events")
-    FOnReloadComplete OnReloadComplete;
+    FOnProgressiveReloadComplete OnProgressiveReloadComplete;
+
+    UPROPERTY(BlueprintAssignable, Category = "Torpedo|Events")
+    FOnFullReloadComplete OnFullReloadComplete;
+
+    /** Fire cooldown just expired */
+    UPROPERTY(BlueprintAssignable, Category = "Torpedo|Events")
+    FOnFireCooldownComplete OnFireCooldownComplete;
+
+    /** Fire cooldown expired AND ammo available — ideal for "ready" HUD flash */
+    UPROPERTY(BlueprintAssignable, Category = "Torpedo|Events")
+    FOnReadyToFire OnReadyToFire;
 
 private:
-    // -- Spawn helper -------------------------------------------------------
+    // Spawn helper
     ATorpedoPawn* SpawnTorpedo(TSubclassOf<ATorpedoPawn> BlueprintClass,
         UTorpedoCharacteristics* TorpedoDA);
 
-    // -- Submarine stat accessor -------------------------------------------
     const USubmarineCharacteristics* GetSubStats() const;
 
-    // -- Reload internal state ---------------------------------------------
-    bool bReloading = false;
+    void TickProgressiveReload(float DeltaTime);
+    void TickFullReload(float DeltaTime);
+
+    // Reload internal state
+    bool  bReloading = false;
+    bool  bWasOnCooldown = false; // edge-detect for fire cooldown delegate
 };
