@@ -8,7 +8,7 @@
 #include "ScreenFadeComponent.h"
 #include "CameraBlendSettings.h"
 #include "Camera/CameraComponent.h"
-//#include "HUD/SubmarineHUDDebugSettings.h"
+#include "HUD/SubmarineHUDDebugSettings.h"
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/FloatingPawnMovement.h"
 
@@ -1226,154 +1226,155 @@ void ASubmarinePawn::OnCamera3rdPersonCompleted(const FInputActionValue& Value)
 
 // -- Health ------------------------------------------------------------------
 
-//float ASubmarinePawn::GetHealthRatio() const
-//{
-//    if (!CollisionHandler) return 0.f;
-//    return CollisionHandler->GetHealthRatio();
-//}
+float ASubmarinePawn::GetHealthRatio() const
+{
+    if (!CollisionHandler) return 0.f;
+    return CollisionHandler->GetHealthRatio();
+}
 
 // -- Movement ----------------------------------------------------------------
 
-//float ASubmarinePawn::GetCurrentSpeed() const
-//{
-//    return CurrentLinearSpeed;
-//}
-//
-//float ASubmarinePawn::GetCurrentDepth() const
-//{
-//    if (!PhysicsHandler) return 0.f;
-//    return PhysicsHandler->CurrentDepth;
-//}
-//
-//float ASubmarinePawn::GetCurrentPitch() const
-//{
-//    return CurrentPitch;
-//}
-//
-//int32 ASubmarinePawn::GetVerticalStateIndex() const
-//{
-//    return VerticalStateIndex;
-//}
-//
-//int32 ASubmarinePawn::GetVerticalStateCount() const
-//{
-//    return SafeVerticalStateCount;
-//}
-//
-//ELinearSpeedState ASubmarinePawn::GetLinearSpeedState() const
-//{
-//    return LinearSpeedState;
-//}
+float ASubmarinePawn::GetCurrentSpeed() const
+{
+    return CurrentLinearSpeed;
+}
+
+float ASubmarinePawn::GetCurrentDepth() const
+{
+    if (!PhysicsHandler) return 0.f;
+    return PhysicsHandler->CurrentDepth;
+}
+
+float ASubmarinePawn::GetCurrentPitch() const
+{
+    return CurrentPitch;
+}
+
+int32 ASubmarinePawn::GetVerticalStateIndex() const
+{
+    return VerticalStateIndex;
+}
+
+int32 ASubmarinePawn::GetVerticalStateCount() const
+{
+    return SafeVerticalStateCount;
+}
+
+ELinearSpeedState ASubmarinePawn::GetLinearSpeedState() const
+{
+    return LinearSpeedState;
+}
 
 // -- Torpedo / Ammo ----------------------------------------------------------
 
-//int32 ASubmarinePawn::GetNormalAmmoCount() const
-//{
-//    if (!TorpedoHandler) return 0;
-//    return TorpedoHandler->CurrentNormalTorpedoes;
-//}
-//
-//int32 ASubmarinePawn::GetNormalAmmoCapacity() const
-//{
-//    if (!TorpedoHandler) return 0;
-//    return TorpedoHandler->NormalTorpedoCapacity;
-//}
-//
-//int32 ASubmarinePawn::GetSpecialAmmoCount() const
-//{
-//    if (!TorpedoHandler) return 0;
-//    return TorpedoHandler->CurrentSpecialTorpedoes;
-//}
-//
-//int32 ASubmarinePawn::GetSpecialAmmoCapacity() const
-//{
-//    if (!TorpedoHandler) return 0;
-//    return TorpedoHandler->SpecialTorpedoCapacity;
-//}
-//
-//float ASubmarinePawn::GetFireCooldownRatio() const
-//{
-//    if (!TorpedoHandler) return 1.f;
-//    return TorpedoHandler->GetFireCooldownRatio();
-//}
-//
-//float ASubmarinePawn::GetReloadRatio() const
-//{
-//    if (!TorpedoHandler) return 1.f;
-//    return TorpedoHandler->GetReloadRatio();
-//}
-//
-//bool ASubmarinePawn::GetIsReloading() const
-//{
-//    if (!TorpedoHandler) return false;
-//    // ReloadTimeRemaining > 0 reliably indicates an active reload in both modes
-//    return TorpedoHandler->ReloadTimeRemaining > 0.f;
-//}
+int32 ASubmarinePawn::GetNormalAmmoCount() const
+{
+    if (!TorpedoHandler) return 0;
+    return TorpedoHandler->CurrentNormalTorpedoes;
+}
+
+int32 ASubmarinePawn::GetNormalAmmoCapacity() const
+{
+    if (!TorpedoHandler) return 0;
+    return TorpedoHandler->NormalTorpedoCapacity;
+}
+
+int32 ASubmarinePawn::GetSpecialAmmoCount() const
+{
+    if (!TorpedoHandler) return 0;
+    return TorpedoHandler->CurrentSpecialTorpedoes;
+}
+
+int32 ASubmarinePawn::GetSpecialAmmoCapacity() const
+{
+    if (!TorpedoHandler) return 0;
+    return TorpedoHandler->SpecialTorpedoCapacity;
+}
+
+float ASubmarinePawn::GetFireCooldownRatio() const
+{
+    if (!TorpedoHandler) return 1.f;
+    return TorpedoHandler->GetFireCooldownRatio();
+}
+
+float ASubmarinePawn::GetReloadRatio() const
+{
+    if (!TorpedoHandler) return 1.f;
+    return TorpedoHandler->GetReloadRatio();
+}
+
+bool ASubmarinePawn::GetIsReloading() const
+{
+    if (!TorpedoHandler) return false;
+    // ReloadTimeRemaining > 0 reliably indicates an active reload in both modes
+    return TorpedoHandler->ReloadTimeRemaining > 0.f;
+}
 
 // -- Identity ----------------------------------------------------------------
 
-//FText ASubmarinePawn::GetDisplayName() const
-//{
-//    // Returns the actor label by default.
-//    // Override or extend this when the match/spawn system is implemented (Phase 5).
-//    return FText::FromString(GetActorLabel());
-//}
+FText ASubmarinePawn::GetDisplayName() const
+{
+    // Returns the actor label by default.
+    // Override or extend this when the match/spawn system is implemented (Phase 5).
+    return FText::FromString(GetActorLabel());
+}
 
 // -- Radar placeholder -------------------------------------------------------
 
-//const TArray<FDetectedEntry>& ASubmarinePawn::GetDetectionEntries() const
-//{
-//    // Empty until RadarComponent is implemented in Phase 4.
-//    static const TArray<FDetectedEntry> EmptyEntries;
-//    return EmptyEntries;
-//}
+const TArray<FDetectedEntry>& ASubmarinePawn::GetDetectionEntries() const
+{
+    // Empty until RadarComponent is implemented in Phase 4.
+    static const TArray<FDetectedEntry> EmptyEntries;
+    return EmptyEntries;
+}
+
+// -- Delegate getters --------------------------------------------------------
 //
-//// -- Delegate getters --------------------------------------------------------
-////
-////  Return references to the actual delegates on the components.
-////  UI modules bind directly to these -- no copies, no indirection.
-////
-////  check() is intentional: these components are created in the constructor
-////  and must always exist for the lifetime of the pawn.
-////  If they are null here, something is seriously wrong with the setup.
-////
-////  CALLER RESPONSIBILITY:
-////    Always validate the UObject before binding:
-////      UObject* Obj = DataSource.GetObject();
-////      if (!IsValid(Obj)) return;
-////      DataSource->GetOnDamagedDelegate().AddDynamic(...);
+//  Return references to the actual delegates on the components.
+//  UI modules bind directly to these -- no copies, no indirection.
 //
-//FOnSubmarineDamaged& ASubmarinePawn::GetOnDamagedDelegate()
-//{
-//    check(CollisionHandler);
-//    return CollisionHandler->OnDamaged;
-//}
+//  check() is intentional: these components are created in the constructor
+//  and must always exist for the lifetime of the pawn.
+//  If they are null here, something is seriously wrong with the setup.
 //
-//FOnAmmoChanged& ASubmarinePawn::GetOnAmmoChangedDelegate()
-//{
-//    check(TorpedoHandler);
-//    return TorpedoHandler->OnAmmoChanged;
-//}
-//
-//FOnTorpedoFired& ASubmarinePawn::GetOnTorpedoFiredDelegate()
-//{
-//    check(TorpedoHandler);
-//    return TorpedoHandler->OnTorpedoFired;
-//}
-//
-//FOnReadyToFire& ASubmarinePawn::GetOnReadyToFireDelegate()
-//{
-//    check(TorpedoHandler);
-//    return TorpedoHandler->OnReadyToFire;
-//}
-//
-//FOnFireCooldownComplete& ASubmarinePawn::GetOnFireCooldownDelegate()
-//{
-//    check(TorpedoHandler);
-//    return TorpedoHandler->OnFireCooldownComplete;
-//}
-//
-//FOnLinearStateChanged& ASubmarinePawn::GetOnLinearStateChangedDelegate()
-//    {
-//        return OnLinearStateChanged;
-//    }
+//  CALLER RESPONSIBILITY:
+//    Always validate the UObject before binding:
+//      UObject* Obj = DataSource.GetObject();
+//      if (!IsValid(Obj)) return;
+//      DataSource->GetOnDamagedDelegate().AddDynamic(...);
+
+FOnSubmarineDamaged& ASubmarinePawn::GetOnDamagedDelegate()
+{
+    check(CollisionHandler);
+    return CollisionHandler->OnDamaged;
+}
+
+FOnAmmoChanged& ASubmarinePawn::GetOnAmmoChangedDelegate()
+{
+    check(TorpedoHandler);
+    return TorpedoHandler->OnAmmoChanged;
+}
+
+FOnTorpedoFired& ASubmarinePawn::GetOnTorpedoFiredDelegate()
+{
+    check(TorpedoHandler);
+    return TorpedoHandler->OnTorpedoFired;
+}
+
+FOnReadyToFire& ASubmarinePawn::GetOnReadyToFireDelegate()
+{
+    check(TorpedoHandler);
+    return TorpedoHandler->OnReadyToFire;
+}
+
+FOnFireCooldownComplete& ASubmarinePawn::GetOnFireCooldownDelegate()
+{
+    check(TorpedoHandler);
+    return TorpedoHandler->OnFireCooldownComplete;
+}
+
+FOnLinearStateChanged& ASubmarinePawn::GetOnLinearStateChangedDelegate()
+{
+    check(Characteristics);
+    return Characteristics->OnLinearStateChanged;
+}

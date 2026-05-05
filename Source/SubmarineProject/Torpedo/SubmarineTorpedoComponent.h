@@ -3,7 +3,6 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "TorpedoCharacteristics.h"   // ETorpedoType
-//#include "SubmarineDelegates.h"
 #include "SubmarineTorpedoComponent.generated.h"
 
 class ATorpedoPawn;
@@ -37,6 +36,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnFireCooldownComplete);
  * Use this for the "ready to fire" HUD indicator.
  */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnReadyToFire);
+
 
 // -----------------------------------------------------------------------------
 //  Reload mode

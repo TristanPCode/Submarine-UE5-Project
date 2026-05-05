@@ -9,7 +9,7 @@ public class SubmarineProject : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 	
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "Landscape", "Niagara" });
+		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "Landscape", "Niagara", "UMG", "Slate", "SlateCore", });
 
 		PrivateDependencyModuleNames.AddRange(new string[] {  });
 
@@ -18,7 +18,6 @@ public class SubmarineProject : ModuleRules
             Path.Combine(ModuleDirectory, ""),
             Path.Combine(ModuleDirectory, "CameraEdit"),
             Path.Combine(ModuleDirectory, "Death"),
-            Path.Combine(ModuleDirectory, "Delegate"),
             Path.Combine(ModuleDirectory, "HUD"),
             Path.Combine(ModuleDirectory, "Replay"),
             Path.Combine(ModuleDirectory, "Submarine"),

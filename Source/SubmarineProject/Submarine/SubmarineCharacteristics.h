@@ -119,6 +119,8 @@ enum class ELinearSpeedState : uint8
     ForwardMAX
 };
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnLinearStateChanged, ELinearSpeedState, NewState);
+
 // ---------------------------------------------
 //  Linear speed table entry
 // ---------------------------------------------
@@ -744,6 +746,17 @@ public:
      */
     UFUNCTION(BlueprintCallable, Category = "Submarine|Collision")
     FCollisionBounceEntry GetCollisionBounce(ESubmarineCollisionType CollisionType) const;
+
+    // -- Delegate ----------------------------------------------------------
+
+    /* Broadcast when the submarine's linear speed state changes.
+    * Fired from ASubmarinePawn::IncrementLinearState() whenever the state
+    * actually changes (not on every key press).
+    * Used by UEngineStateModule for event-driven (non-tick) updates.
+    */
+
+    UPROPERTY(BlueprintAssignable, Category = "Submarine|Events")
+    FOnLinearStateChanged OnLinearStateChanged;
 
 
     // -- Debug ---------------

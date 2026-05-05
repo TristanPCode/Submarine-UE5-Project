@@ -3,8 +3,8 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Pawn.h"
 #include "SubmarineCharacteristics.h"
-//#include "SubmarineTorpedoComponent.h"
-//#include "TrackableSubmarine.h"
+#include "SubmarineTorpedoComponent.h"
+#include "TrackableSubmarine.h"
 #include "SubmarinePawn.generated.h"
 
 // -- Forward declarations ---------------------------------------------------
@@ -22,7 +22,7 @@ struct FInputActionValue;
 //  ASubmarinePawn
 // -----------------------------------------------------------------------------
 UCLASS()
-class SUBMARINEPROJECT_API ASubmarinePawn : public APawn//, public ITrackableSubmarine
+class SUBMARINEPROJECT_API ASubmarinePawn : public APawn, public ITrackableSubmarine
 {
     GENERATED_BODY()
 
@@ -187,13 +187,13 @@ public:
     // -- Public Getters ----------------------------------------------------
 
     USubmarineCollisionComponent* GetCollisionHandler() const { return CollisionHandler; }
-    //USubmarineTorpedoComponent* GetTorpedoHandler() const { return TorpedoHandler; }
+    USubmarineTorpedoComponent* GetTorpedoHandler() const { return TorpedoHandler; }
 
 
     // -------------------------------------------------------------------
     //  ITrackableSubmarine interface
     // -------------------------------------------------------------------
-    /*virtual float              GetHealthRatio()          const override;
+    virtual float              GetHealthRatio()          const override;
     virtual float              GetCurrentSpeed()         const override;
     virtual float              GetCurrentDepth()         const override;
     virtual float              GetCurrentPitch()         const override;
@@ -214,7 +214,7 @@ public:
     virtual FOnTorpedoFired&         GetOnTorpedoFiredDelegate()  override;
     virtual FOnReadyToFire&          GetOnReadyToFireDelegate()   override;
     virtual FOnFireCooldownComplete& GetOnFireCooldownDelegate()  override;
-    virtual FOnLinearStateChanged& GetOnLinearStateChangedDelegate() override;*/
+    virtual FOnLinearStateChanged& GetOnLinearStateChangedDelegate() override;
 
 private:
     // -- Components --------------------------------------------------------
@@ -251,9 +251,9 @@ private:
         meta = (AllowPrivateAccess = "true"))
     TObjectPtr<USubmarinePhysicsComponent> PhysicsHandler;
 
-    /*UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components",
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components",
         meta = (AllowPrivateAccess = "true"))
-    TObjectPtr<USubmarineTorpedoComponent> TorpedoHandler;*/
+    TObjectPtr<USubmarineTorpedoComponent> TorpedoHandler;
 
     // -- Overlap -------------------------------------------------------------
 
@@ -281,9 +281,6 @@ private:
     int32 ForwardHoldIntervalsConsumed = 0;
 
     void IncrementLinearState(int32 Direction); // Direction: +1 forward, -1 backward
-
-    /*UPROPERTY(BlueprintAssignable, Category = "Submarine|Events")
-    FOnLinearStateChanged OnLinearStateChanged;*/
 
     // -- Vertical angle internals ------------------------------------------
 

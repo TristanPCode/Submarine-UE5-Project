@@ -3,7 +3,6 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "SubmarineCharacteristics.h"
-//#include "SubmarineDelegates.h"
 #include "SubmarineCollisionComponent.generated.h"
 
 
