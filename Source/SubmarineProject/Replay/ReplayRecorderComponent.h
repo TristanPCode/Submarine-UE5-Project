@@ -95,6 +95,11 @@ public:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Replay")
     TObjectPtr<UReplayData> LoadedReplay;
 
+    /** Record a VFX event. Called automatically; also callable from Blueprint. */
+    UFUNCTION(BlueprintCallable, Category = "Replay")
+    void RecordVFXEvent(UNiagaraSystem* Asset, const FVector& Location,
+        const FRotator& Rotation, const FVector& Scale);
+
     // -----------------------------------------------------------------------
     //  Delegates
     // -----------------------------------------------------------------------
@@ -113,7 +118,23 @@ private:
     /** Cached list of actors being tracked this tick. Refreshed each tick. */
     TArray<TWeakObjectPtr<AActor>> TrackedActors;
 
+    /** GUIDs present last tick -- for torpedo disappearance detection. */
+    TSet<FGuid> PreviousFrameGuids;
+
+    /** Last recorded world location per GUID -- for placing VFX on disappearance. */
+    TMap<FGuid, FVector> LastSeenLocation;
+
+    /** Cached Niagara VFX asset per torpedo GUID -- populated when torpedo first seen,
+     *  remains valid even after the torpedo is Destroy()ed. */
+    TMap<FGuid, TObjectPtr<UNiagaraSystem>> CachedTorpedoVFX;
+    TMap<FGuid, float>                      CachedTorpedoVFXScale;
+
+    /** Submarines that already triggered their death VFX -- avoids double-recording. */
+    TSet<FGuid> DeadSubmarineGuids;
+
     void RefreshTrackedActors();
+    void DetectAndRecordVFXEvents(float WorldTime);
+
     void RecordTickFrame(float WorldTime);
     void RecordKeyframe(float WorldTime);
 

@@ -6,12 +6,62 @@
 #include "GameFramework/GameModeBase.h"
 #include "SubmarineSpectatorPawn.h"
 #include "DeathSequenceComponent.h"
+#include "ReplaySettings.h"
 #include "SubmarineGameMode.generated.h"
 
 class ASubmarinePawn;
+class ASubmarineSpectatorPawn;
 class UReplayRecorderComponent;
+class UReplayPlaybackComponent;
 class UReplaySettings;
 class UCameraBlendSettings;
+class UScreenFadeComponent;
+
+/**
+ * Caches killer identity at the moment of death.
+ * We cannot keep a weak pointer to the torpedo — it destroys itself
+ * within the same frame or shortly after. Instead we store the name,
+ * class, and the firing submarine pointer (submarines persist).
+ */
+USTRUCT()
+struct FKillerInfo
+{
+    GENERATED_BODY()
+
+    /** Actor name of the killer (torpedo or submarine). Empty = environmental. */
+    FString ActorName;
+
+    /**
+     * Stable GUID of the killer actor -- survives even after the actor is Destroy()ed
+     * because FGuid is a plain value type. Used to identify the ghost in the replay.
+     */
+    FGuid ActorGuid;
+
+    /** True if the killer was a torpedo. */
+    bool bWasTorpedo = false;
+
+    /**
+     * The submarine that fired the killing torpedo, or the killer submarine
+     * itself. This pointer stays valid after the torpedo is destroyed.
+     */
+    TWeakObjectPtr<ASubmarinePawn> KillerSubmarine;
+
+    /**
+     * The torpedo actor, valid only at the moment of death.
+     * Will be null by the time OnPostDeathRecordingComplete fires.
+     * Cached here just to extract its name before it dies.
+     */
+    TWeakObjectPtr<AActor> TorpedoActor;
+
+    void Clear()
+    {
+        ActorName.Empty();
+        ActorGuid.Invalidate();
+        bWasTorpedo = false;
+        KillerSubmarine = nullptr;
+        TorpedoActor = nullptr;
+    }
+};
 
 /**
  * ASubmarineGameMode
@@ -90,8 +140,16 @@ public:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
     TObjectPtr<UReplayRecorderComponent> ReplayRecorder;
 
+    /** Drives ghost actors from recorded data during the death cam. */
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+    TObjectPtr<UReplayPlaybackComponent> ReplayPlayback;
+
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
     TObjectPtr<UDeathSequenceComponent> DeathSequence;
+
+    /** Drives StartCameraFade for all three phases (gameplay / death / spectator). */
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+    TObjectPtr<UScreenFadeComponent> ScreenFade;
 
 private:
     /**
@@ -101,7 +159,24 @@ private:
     UFUNCTION()
     void OnDeathSequenceComplete();
 
+    /**
+     * Fired by PostDeathRecordingTimer after DeathPreviewDelay seconds.
+     * At this point the explosion VFX has been spawned and the recording
+     * has captured it, so we can safely extract the slice and begin playback.
+     */
+    void OnPostDeathRecordingComplete();
+
     // Kept alive across the death sequence so the handler has valid data
     TWeakObjectPtr<ASubmarinePawn> PendingDeadSub;
     TWeakObjectPtr<AController>    PendingDeadController;
+
+    /**
+     * Killer info cached at death time — survives the DeathPreviewDelay
+     * even after the torpedo is destroyed.
+     */
+    FKillerInfo PendingKillerInfo;
+
+    /** Timer that fires OnPostDeathRecordingComplete after DeathPreviewDelay. */
+    FTimerHandle PostDeathRecordingTimer;
+
 };

@@ -5,10 +5,18 @@
 #include "SubmarineCollisionComponent.h"
 #include "SubmarinePhysicsComponent.h"
 #include "TorpedoPawn.h"
+#include "ScreenFadeComponent.h"
 #include "CameraBlendSettings.h"
 #include "Camera/CameraComponent.h"
+//#include "HUD/SubmarineHUDDebugSettings.h"
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/FloatingPawnMovement.h"
+
+#include "Engine/EngineTypes.h"
+#include "EngineUtils.h"
+#include "Engine/World.h"
+#include "Engine/OverlapResult.h"
+#include "CollisionQueryParams.h"
 
 // Enhanced Input
 #include "EnhancedInputComponent.h"
@@ -133,7 +141,7 @@ void ASubmarinePawn::Tick(float DeltaTime)
     TickYawMovement(DeltaTime);
     TickFinalMovement(DeltaTime);
     TickCameraSwitch(DeltaTime);
-    TickAntiStuck(DeltaTime);
+    //TickAntiStuck(DeltaTime);
 
     // Enforce zero roll every tick — collisions must never tilt the submarine sideways
     FRotator Rot = GetActorRotation();
@@ -159,6 +167,8 @@ void ASubmarinePawn::FreezeOnDeath()
     if (bDead) return;
     bDead = true;
 
+    const USubmarineCharacteristics* Stats = GetStats();
+
     // Stop all movement immediately
     CurrentLinearSpeed = 0.f;
     CurrentVerticalSpeed = 0.f;
@@ -175,17 +185,151 @@ void ASubmarinePawn::FreezeOnDeath()
         PhysicsHandler->TargetVerticalSpeed = 0.f;
     }
 
-    // Detach the controller — this stops all Enhanced Input events from firing
-    // and lets the PlayerCameraManager accept manual position overrides
-    // (which is what DeathSequenceComponent::ApplyViewToController needs).
+    // ------------------------------------------------------------------
+    //  Hide from ALL players.
+    //
+    //  SetActorHiddenInGame alone does NOT reliably hide Blueprint-added
+    //  child components in UE5 — they maintain independent visibility state.
+    //  We explicitly call SetVisibility(false) and SetHiddenInGame(true)
+    //  on every primitive, with bPropagateToChildren=true.
+    // ------------------------------------------------------------------
+    TArray<UPrimitiveComponent*> Prims;
+    GetComponents<UPrimitiveComponent>(Prims);
+
+    if (Stats->bLogFreezeOnDeath) {
+        UE_LOG(LogTemp, Warning,
+            TEXT("[FreezeOnDeath] '%s' has %d primitive components to hide:"),
+            *GetName(), Prims.Num());
+    }
+
+    for (UPrimitiveComponent* Prim : Prims)
+    {
+        if (!Prim) continue;
+
+        const bool bWasVisible = Prim->IsVisible();
+        const bool bWasHiddenIG = Prim->bHiddenInGame;
+
+        Prim->SetVisibility(false, /*bPropagateToChildren=*/true);
+        Prim->SetHiddenInGame(true, /*bPropagateToChildren=*/true);
+        Prim->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+        if (Stats->bLogFreezeOnDeath) {
+            UE_LOG(LogTemp, Warning,
+                TEXT("[FreezeOnDeath]   Prim='%s' WasVisible=%d WasHiddenIG=%d -> NowVisible=%d NowHiddenIG=%d"),
+                *Prim->GetName(),
+                bWasVisible ? 1 : 0,
+                bWasHiddenIG ? 1 : 0,
+                Prim->IsVisible() ? 1 : 0,
+                Prim->bHiddenInGame ? 1 : 0);
+        }
+    }
+
+    // Belt-and-suspenders: actor-level hidden flag
+    SetActorHiddenInGame(true);
+
+    if (Stats->bLogFreezeOnDeath) {
+        UE_LOG(LogTemp, Warning,
+            TEXT("[FreezeOnDeath] '%s' actor IsHidden=%d"),
+            *GetName(), IsHidden() ? 1 : 0);
+    }
+
+    // ------------------------------------------------------------------
+    //  Before unpossessing: cache the current active camera world
+    //  transform so we can immediately restore it on the controller
+    //  AFTER UnPossess(). Without this, UnPossess() resets the view
+    //  target and the camera snaps to the controller default rotation.
+    // ------------------------------------------------------------------
+    FVector  CachedCamLoc = FVector::ZeroVector;
+    FRotator CachedCamRot = FRotator::ZeroRotator;
+    bool     bHasCachedCam = false;
+
+    // Find the currently active camera component
+    TArray<UCameraComponent*> AllCams;
+    GetComponents<UCameraComponent>(AllCams);
+    for (UCameraComponent* Cam : AllCams)
+    {
+        if (Cam && Cam->IsActive())
+        {
+            CachedCamLoc = Cam->GetComponentLocation();
+            CachedCamRot = Cam->GetComponentRotation();
+            bHasCachedCam = true;
+            if (Stats->bLogFreezeOnDeath) {
+                UE_LOG(LogTemp, Log,
+                    TEXT("[FreezeOnDeath] Cached active cam '%s': Loc=%s Rot=%s"),
+                    *Cam->GetName(), *CachedCamLoc.ToString(), *CachedCamRot.ToString());
+            }
+            break;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    //  Detach controller — stops Enhanced Input and lets the dead player's
+    //  camera be driven by DeathSequenceComponent::ApplyViewToController.
+    // ------------------------------------------------------------------
     if (AController* C = GetController())
+    {
         C->UnPossess();
 
-    // Disable this actor's tick entirely — no more movement, physics, or input
-    SetActorTickEnabled(false);
+        // Immediately re-apply the camera transform so the view does not pop.
+        // DeathSequenceComponent::ApplyViewToController will take over from here.
+        if (bHasCachedCam)
+        {
+            APlayerController* PC = Cast<APlayerController>(C);
+            if (PC)
+            {
+                PC->SetInitialLocationAndRotation(CachedCamLoc, CachedCamRot);
+                if (PC->PlayerCameraManager)
+                    PC->PlayerCameraManager->SetActorLocationAndRotation(CachedCamLoc, CachedCamRot);
+                if (Stats->bLogFreezeOnDeath) {
+                    UE_LOG(LogTemp, Log,
+                        TEXT("[FreezeOnDeath] Restored cam view on PC after UnPossess: Loc=%s Rot=%s"),
+                        *CachedCamLoc.ToString(), *CachedCamRot.ToString());
+                }
+            }
+        }
+    }
 
-    UE_LOG(LogTemp, Log, TEXT("[SubmarinePawn] FreezeOnDeath: '%s' frozen and unpossessed"),
-        *GetName());
+    // Disable tick — no more movement, physics, or input processing
+    SetActorTickEnabled(false);
+}
+
+// -----------------------------------------------------------------------------
+//  Blueprint collision forwarding — thin wrappers into CollisionHandler
+//  Same UFUNCTION names preserved so existing Blueprint graphs keep working.
+// -----------------------------------------------------------------------------
+
+void ASubmarinePawn::RegisterHitFromBlueprint(const FHitResult& Hit)
+{
+    if (CollisionHandler)
+        CollisionHandler->RegisterHitFromBlueprint(Hit);
+}
+
+void ASubmarinePawn::HandleHitFromBlueprint(const FHitResult& Hit)
+{
+    if (CollisionHandler)
+        CollisionHandler->HandleHitFromBlueprint(Hit);
+}
+
+// -----------------------------------------------------------------------------
+//  Overlap callbacks (must stay on pawn — delegate binding requires UFUNCTION)
+// -----------------------------------------------------------------------------
+
+void ASubmarinePawn::OnOverlapBegin(UPrimitiveComponent* OverlappedComp, AActor* OtherActor,
+    UPrimitiveComponent* OtherComp, int32 OtherBodyIndex,
+    bool bFromSweep, const FHitResult& SweepResult)
+{
+    if (!OtherActor || !OtherActor->IsValidLowLevel() || OtherActor == this) return;
+    if (CollisionHandler)
+    {
+        CollisionHandler->RegisterHit(OtherActor, SweepResult);
+        CollisionHandler->ProcessHit(SweepResult, OtherActor);
+    }
+}
+
+void ASubmarinePawn::OnOverlapEnd(UPrimitiveComponent* OverlappedComp, AActor* OtherActor,
+    UPrimitiveComponent* OtherComp, int32 OtherBodyIndex)
+{
+    // Cleanup handled by anti-stuck ThresholdOut inside CollisionHandler
 }
 
 // -----------------------------------------------------------------------------
@@ -460,17 +604,20 @@ void ASubmarinePawn::TickVerticalMovement(float DeltaTime)
     if (!DeltaRot.IsNearlyZero(KINDA_SMALL_NUMBER))
     {
         FHitResult RotHit;
-        // Use local rotation for pitch — avoids gimbal lock entirely
         AddActorLocalRotation(FRotator(DeltaRot.Pitch, 0.f, 0.f), true, &RotHit);
 
-        if (RotHit.IsValidBlockingHit() && RotHit.GetActor() && CollisionHandler && !Stats->bEnableBluePrintCollisions)
+        if (RotHit.IsValidBlockingHit() && RotHit.GetActor()
+            && Stats->bEnableBluePrintCollisions && CollisionHandler)
         {
-            RegisterHit(RotHit.GetActor(), RotHit);
-            UE_LOG(LogTemp, Warning, TEXT("[RotHit-Pitch] Hit %s"), *RotHit.GetActor()->GetName());
-            CollisionHandler->ProcessHit(RotHit, RotHit.GetActor());
+            CollisionHandler->RegisterHitFromBlueprint(RotHit);
+            CollisionHandler->HandleHitFromBlueprint(RotHit);
             PitchVelocity = 0.f;
             CurrentPitch = GetActorRotation().Pitch;
         }
+
+        // Fallback: catches contacts missed by the sweep (pure in-place pitch)
+        if (CollisionHandler)
+            CollisionHandler->CheckRotationContactBP(1);
 
         // Always enforce zero roll after any rotation
         FRotator AfterRot = GetActorRotation();
@@ -551,12 +698,17 @@ void ASubmarinePawn::TickYawMovement(float DeltaTime)
         FHitResult RotHit;
         AddActorWorldRotation(FRotator(0.f, YawDelta, 0.f), true, &RotHit);
 
-        if (RotHit.IsValidBlockingHit() && RotHit.GetActor() && CollisionHandler && !Stats->bEnableBluePrintCollisions)
+        // Sweep-based hit (handles contacts caused by translational displacement)
+        if (RotHit.IsValidBlockingHit() && RotHit.GetActor()
+            && Stats->bEnableBluePrintCollisions && CollisionHandler)
         {
-            RegisterHit(RotHit.GetActor(), RotHit);
-            UE_LOG(LogTemp, Warning, TEXT("[RotHit-Yaw] Hit %s"), *RotHit.GetActor()->GetName());
-            CollisionHandler->ProcessHit(RotHit, RotHit.GetActor());
+            CollisionHandler->RegisterHitFromBlueprint(RotHit);
+            CollisionHandler->HandleHitFromBlueprint(RotHit);
         }
+
+        // Fallback: catches contacts missed by the sweep (pure in-place rotation)
+        if (CollisionHandler)
+            CollisionHandler->CheckRotationContactBP(0);
     }
 }
 
@@ -595,7 +747,7 @@ void ASubmarinePawn::TickFinalMovement(float DeltaTime)
         // Debug every 2s
         static float DbgTimer = 0.f;
         DbgTimer += DeltaTime;
-        if (DbgTimer >= 2.f)
+        if (DbgTimer >= 2.f && Stats->bDebugMovementLogs)
         {
             DbgTimer = 0.f;
             UE_LOG(LogTemp, Warning,
@@ -634,7 +786,8 @@ void ASubmarinePawn::TickFinalMovement(float DeltaTime)
     if (Hit.IsValidBlockingHit() && Hit.GetActor() && !Stats->bEnableBluePrintCollisions)
     {
         // Register for anti-stuck tracking
-        RegisterHit(Hit.GetActor(), Hit);
+        if (CollisionHandler)
+            CollisionHandler->RegisterHit(Hit.GetActor(), Hit);
 
         if (CollisionHandler)
             CollisionHandler->ProcessHit(Hit, Hit.GetActor());
@@ -756,7 +909,11 @@ void ASubmarinePawn::IncrementLinearState(int32 Direction)
     // ELinearSpeedState is ordered 0..6 (BackwardMAX -> ForwardMAX)
     const int32 Current = static_cast<int32>(LinearSpeedState);
     const int32 Next = FMath::Clamp(Current + Direction, 0, 6);
+    const ELinearSpeedState OldState = LinearSpeedState;
     LinearSpeedState = static_cast<ELinearSpeedState>(Next);
+    /*if (LinearSpeedState != OldState) {
+        OnLinearStateChanged.Broadcast(LinearSpeedState);
+    }*/
 }
 
 // -----------------------------------------------------------------------------
@@ -1061,174 +1218,162 @@ void ASubmarinePawn::OnCamera3rdPersonCompleted(const FInputActionValue& Value)
     bThirdPersonHoldFired = false;
 }
 
-// -----------------------------------------------------------------------------
-//  Collision Overlap
-// -----------------------------------------------------------------------------
-void ASubmarinePawn::OnOverlapBegin(UPrimitiveComponent* OverlappedComp, AActor* OtherActor,
-    UPrimitiveComponent* OtherComp, int32 OtherBodyIndex,
-    bool bFromSweep, const FHitResult& SweepResult)
-{
-    if (!OtherActor || !OtherActor->IsValidLowLevel() || OtherActor == this) return;
-    RegisterHit(OtherActor, SweepResult);
-    if (CollisionHandler)
-        CollisionHandler->ProcessHit(SweepResult, OtherActor);
-}
 
-void ASubmarinePawn::OnOverlapEnd(UPrimitiveComponent* OverlappedComp, AActor* OtherActor,
-    UPrimitiveComponent* OtherComp, int32 OtherBodyIndex)
-{
-    // Don't remove immediately — ThresholdOut handles cleanup in TickAntiStuck
-}
+// ============================================================================
+//  ITrackableSubmarine  --  interface implementation
+//  All methods delegate to existing components. No new state introduced.
+// ============================================================================
 
-// -----------------------------------------------------------------------------
-//  Collision Blueprint Handler 
-// -----------------------------------------------------------------------------
+// -- Health ------------------------------------------------------------------
 
+//float ASubmarinePawn::GetHealthRatio() const
+//{
+//    if (!CollisionHandler) return 0.f;
+//    return CollisionHandler->GetHealthRatio();
+//}
 
-void ASubmarinePawn::HandleHitFromBlueprint(const FHitResult& Hit)
-{
-    const USubmarineCharacteristics* Stats = GetStats();
-    if (Hit.IsValidBlockingHit() && Hit.GetActor() && Stats->bEnableBluePrintCollisions && CollisionHandler)
-    {
-        CollisionHandler->ProcessHit(Hit, Hit.GetActor());
-    }
-}
+// -- Movement ----------------------------------------------------------------
 
-// -----------------------------------------------------------------------------
-//  RegisterHit — called from both OnOverlapBegin and TickFinalMovement
-// -----------------------------------------------------------------------------
-void ASubmarinePawn::RegisterHit(AActor* OtherActor, const FHitResult& Hit)
-{
-    const USubmarineCharacteristics* Stats = GetStats();
-    if (!OtherActor || !IsValid(OtherActor) || !Stats->bEnableAntiStuckPhysics) return;
+//float ASubmarinePawn::GetCurrentSpeed() const
+//{
+//    return CurrentLinearSpeed;
+//}
+//
+//float ASubmarinePawn::GetCurrentDepth() const
+//{
+//    if (!PhysicsHandler) return 0.f;
+//    return PhysicsHandler->CurrentDepth;
+//}
+//
+//float ASubmarinePawn::GetCurrentPitch() const
+//{
+//    return CurrentPitch;
+//}
+//
+//int32 ASubmarinePawn::GetVerticalStateIndex() const
+//{
+//    return VerticalStateIndex;
+//}
+//
+//int32 ASubmarinePawn::GetVerticalStateCount() const
+//{
+//    return SafeVerticalStateCount;
+//}
+//
+//ELinearSpeedState ASubmarinePawn::GetLinearSpeedState() const
+//{
+//    return LinearSpeedState;
+//}
 
-    // Never track torpedoes in the anti-stuck system
-    if (OtherActor->IsA<ATorpedoPawn>()) return;
+// -- Torpedo / Ammo ----------------------------------------------------------
 
-    const float Now = GetWorld()->GetTimeSeconds();
+//int32 ASubmarinePawn::GetNormalAmmoCount() const
+//{
+//    if (!TorpedoHandler) return 0;
+//    return TorpedoHandler->CurrentNormalTorpedoes;
+//}
+//
+//int32 ASubmarinePawn::GetNormalAmmoCapacity() const
+//{
+//    if (!TorpedoHandler) return 0;
+//    return TorpedoHandler->NormalTorpedoCapacity;
+//}
+//
+//int32 ASubmarinePawn::GetSpecialAmmoCount() const
+//{
+//    if (!TorpedoHandler) return 0;
+//    return TorpedoHandler->CurrentSpecialTorpedoes;
+//}
+//
+//int32 ASubmarinePawn::GetSpecialAmmoCapacity() const
+//{
+//    if (!TorpedoHandler) return 0;
+//    return TorpedoHandler->SpecialTorpedoCapacity;
+//}
+//
+//float ASubmarinePawn::GetFireCooldownRatio() const
+//{
+//    if (!TorpedoHandler) return 1.f;
+//    return TorpedoHandler->GetFireCooldownRatio();
+//}
+//
+//float ASubmarinePawn::GetReloadRatio() const
+//{
+//    if (!TorpedoHandler) return 1.f;
+//    return TorpedoHandler->GetReloadRatio();
+//}
+//
+//bool ASubmarinePawn::GetIsReloading() const
+//{
+//    if (!TorpedoHandler) return false;
+//    // ReloadTimeRemaining > 0 reliably indicates an active reload in both modes
+//    return TorpedoHandler->ReloadTimeRemaining > 0.f;
+//}
 
-    FHitTracker* Tracker = HitTrackers.Find(OtherActor);
-    if (!Tracker)
-    {
-        // First time hitting this actor
-        FHitTracker NewTracker;
-        NewTracker.FirstHitTime = Now;
-        NewTracker.LastHitTime = Now;
-        if (!Hit.ImpactNormal.IsNearlyZero())
-        {
-            NewTracker.NormalSum = Hit.ImpactNormal;
-            NewTracker.NormalCount = 1;
-        }
-        HitTrackers.Add(OtherActor, NewTracker);
+// -- Identity ----------------------------------------------------------------
 
-        UE_LOG(LogTemp, Warning, TEXT("[AntiStuck] NEW contact: %s"), *OtherActor->GetName());
-    }
-    else
-    {
-        // Already tracked — update last hit time and accumulate normal
-        Tracker->LastHitTime = Now;
-        if (!Hit.ImpactNormal.IsNearlyZero())
-        {
-            Tracker->NormalSum += Hit.ImpactNormal;
-            Tracker->NormalCount += 1;
-        }
-    }
-}
+//FText ASubmarinePawn::GetDisplayName() const
+//{
+//    // Returns the actor label by default.
+//    // Override or extend this when the match/spawn system is implemented (Phase 5).
+//    return FText::FromString(GetActorLabel());
+//}
 
-void ASubmarinePawn::RegisterHitFromBlueprint(const FHitResult& Hit)
-{
-    // Called from Blueprint Event Hit — feeds the anti-stuck tracker
-    const USubmarineCharacteristics* Stats = GetStats();
-    if (Hit.GetActor() && Hit.GetActor() != this && Stats->bEnableBluePrintCollisions) {
-        RegisterHit(Hit.GetActor(), Hit);
-    }
-}
+// -- Radar placeholder -------------------------------------------------------
 
-// -----------------------------------------------------------------------------
-//  Anti-stuck system
-// -----------------------------------------------------------------------------
-void ASubmarinePawn::TickAntiStuck(float DeltaTime)
-{
-    const USubmarineCharacteristics* Stats = GetStats();
-    if (!Stats || HitTrackers.Num() == 0) return;
-
-    const float Now = GetWorld()->GetTimeSeconds();
-
-    TArray<AActor*> ToRemove;
-
-    for (auto& Pair : HitTrackers)
-    {
-        AActor* Other = Pair.Key;
-        FHitTracker& Tracker = Pair.Value;
-
-        if (!IsValid(Other))
-        {
-            ToRemove.Add(Other);
-            continue;
-        }
-
-        // ThresholdOut: if we haven't hit this actor recently, forget it
-        const float TimeSinceLastHit = Now - Tracker.LastHitTime;
-        if (TimeSinceLastHit > Stats->AntiStuckThresholdOut)
-        {
-            UE_LOG(LogTemp, Warning, TEXT("[AntiStuck] FORGET %s (no hit for %.2fs)"),
-                *Other->GetName(), TimeSinceLastHit);
-            ToRemove.Add(Other);
-            continue;
-        }
-
-        // ThresholdIn: how long have we been in continuous contact?
-        const float ContactDuration = Tracker.LastHitTime - Tracker.FirstHitTime;
-
-        if (ContactDuration >= Stats->AntiStuckThresholdIn)
-        {
-            // Check cooldown
-            const float TimeSinceExpulsion = Now - Tracker.LastExpulsionTime;
-            if (TimeSinceExpulsion < Stats->AntiStuckCooldown)
-                continue;
-
-            // Compute escape direction from accumulated normals
-            FVector EscapeDir = FVector::ZeroVector;
-            if (Tracker.NormalCount > 0)
-                EscapeDir = (Tracker.NormalSum / Tracker.NormalCount).GetSafeNormal();
-
-            // Fallback: center-to-center
-            if (EscapeDir.IsNearlyZero())
-            {
-                EscapeDir = GetActorLocation() - Other->GetActorLocation();
-                if (EscapeDir.IsNearlyZero()) EscapeDir = FVector::UpVector;
-                EscapeDir.Normalize();
-            }
-
-            UE_LOG(LogTemp, Warning,
-                TEXT("[AntiStuck] FIRE on %s! Contact=%.2fs Dir=(%.2f,%.2f,%.2f) Force=%.0f"),
-                *Other->GetName(), ContactDuration,
-                EscapeDir.X, EscapeDir.Y, EscapeDir.Z,
-                Stats->AntiStuckForce);
-
-            // Brute-force nudge
-            AddActorWorldOffset(EscapeDir * 5.f, false);
-
-            // Apply escape velocity
-            const FVector WorldImpulse = EscapeDir * Stats->AntiStuckForce;
-            const float ForwardComp = FVector::DotProduct(WorldImpulse, GetActorForwardVector());
-            SetExternalLinearVelocity(GetExternalLinearVelocity() + ForwardComp);
-            SetExternalVerticalVelocity(GetExternalVerticalVelocity() + WorldImpulse.Z);
-
-            // Push other actor away
-            if (USubmarinePhysicsComponent* OtherPhysics =
-                Other->FindComponentByClass<USubmarinePhysicsComponent>())
-            {
-                OtherPhysics->AddImpulse(-WorldImpulse);
-            }
-
-            // Record expulsion time, reset normals
-            Tracker.LastExpulsionTime = Now;
-            Tracker.NormalSum = FVector::ZeroVector;
-            Tracker.NormalCount = 0;
-        }
-    }
-
-    for (AActor* Dead : ToRemove)
-        HitTrackers.Remove(Dead);
-}
+//const TArray<FDetectedEntry>& ASubmarinePawn::GetDetectionEntries() const
+//{
+//    // Empty until RadarComponent is implemented in Phase 4.
+//    static const TArray<FDetectedEntry> EmptyEntries;
+//    return EmptyEntries;
+//}
+//
+//// -- Delegate getters --------------------------------------------------------
+////
+////  Return references to the actual delegates on the components.
+////  UI modules bind directly to these -- no copies, no indirection.
+////
+////  check() is intentional: these components are created in the constructor
+////  and must always exist for the lifetime of the pawn.
+////  If they are null here, something is seriously wrong with the setup.
+////
+////  CALLER RESPONSIBILITY:
+////    Always validate the UObject before binding:
+////      UObject* Obj = DataSource.GetObject();
+////      if (!IsValid(Obj)) return;
+////      DataSource->GetOnDamagedDelegate().AddDynamic(...);
+//
+//FOnSubmarineDamaged& ASubmarinePawn::GetOnDamagedDelegate()
+//{
+//    check(CollisionHandler);
+//    return CollisionHandler->OnDamaged;
+//}
+//
+//FOnAmmoChanged& ASubmarinePawn::GetOnAmmoChangedDelegate()
+//{
+//    check(TorpedoHandler);
+//    return TorpedoHandler->OnAmmoChanged;
+//}
+//
+//FOnTorpedoFired& ASubmarinePawn::GetOnTorpedoFiredDelegate()
+//{
+//    check(TorpedoHandler);
+//    return TorpedoHandler->OnTorpedoFired;
+//}
+//
+//FOnReadyToFire& ASubmarinePawn::GetOnReadyToFireDelegate()
+//{
+//    check(TorpedoHandler);
+//    return TorpedoHandler->OnReadyToFire;
+//}
+//
+//FOnFireCooldownComplete& ASubmarinePawn::GetOnFireCooldownDelegate()
+//{
+//    check(TorpedoHandler);
+//    return TorpedoHandler->OnFireCooldownComplete;
+//}
+//
+//FOnLinearStateChanged& ASubmarinePawn::GetOnLinearStateChangedDelegate()
+//    {
+//        return OnLinearStateChanged;
+//    }

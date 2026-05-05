@@ -6,12 +6,13 @@
 
 class ASubmarinePawn;
 class ATorpedoPawn;
-class ASubmarineSpectatorPawn;
 class UReplayData;
 class UReplaySettings;
+class UReplayPlaybackComponent;
+class UScreenFadeComponent;
 
 // -----------------------------------------------------------------------
-//  What killed this submarine — determines death-cam angle
+//  What killed this submarine - determines death-cam angle
 // -----------------------------------------------------------------------
 UENUM(BlueprintType)
 enum class EDeathCamMode : uint8
@@ -40,8 +41,7 @@ enum class EDeathSequencePhase : uint8
 
 // Fired when the death cam phase starts (useful for Blueprint UI)
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnDeathCamStarted,
-    EDeathCamMode, Mode,
-    float, Duration);
+    EDeathCamMode, Mode, float, Duration);
 
 // Fired when the sequence is fully complete and we should switch to spectator
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnDeathSequenceComplete);
@@ -49,16 +49,15 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnDeathSequenceComplete);
 /**
  * UDeathSequenceComponent
  *
- * Death flow:
- *   1. Submarine mesh hidden + collisions disabled immediately on death.
- *   2. Optional pre-delay.
- *   3. Death cam tracks the killer from 3rd person (fixed, no orbit) or POV.
- *      - If killer torpedo hasn't spawned yet: estimate position from the
- *        firing submarine's muzzle transform.
- *      - If killer is destroyed mid-cam: freeze camera at last known
- *        position/rotation for the remainder of the duration.
- *   4. OnDeathSequenceComplete fires -> GameMode spawns spectator pawn and
- *      destroys the dead submarine actor.
+ * Death flow (revised):
+ *   1. BeginDeathSequence is called AFTER DeathPreviewDelay has elapsed
+ *      (GameMode waits for the timer before calling this). The replay slice
+ *      already contains the explosion VFX frames.
+ *   2. Replay playback starts immediately (no pre-delay phase here —
+ *      the pre-delay was the GameMode timer).
+ *   3. Ghost actors drive the camera for DeathCamWallClockDuration seconds
+ *      (= SliceSeconds / PlaybackSpeed).
+ *   4. OnDeathSequenceComplete -> GameMode fades out and spawns spectator.
  */
 UCLASS(ClassGroup = (Submarine), meta = (BlueprintSpawnableComponent))
 class SUBMARINEPROJECT_API UDeathSequenceComponent : public UActorComponent
@@ -76,20 +75,23 @@ public:
     // -----------------------------------------------------------------------
 
     /**
-     * Begin the death sequence for DeadSubmarine.
-     *
-     * @param DeadController   The controller that was possessing the sub.
-     * @param Killer           The actor that dealt the killing blow (torpedo or sub).
-     *                         Pass nullptr if unknown (e.g. depth pressure).
-     * @param ReplaySlice      Optional: a slice of the replay buffer covering
-     *                         the last N seconds leading up to the death.
-     *                         If null, falls back to a live death-cam look-at.
+     * Begin the death replay sequence.
+     * @param DeadSubmarine       Submarine that died (already hidden by FreezeOnDeath).
+     * @param DeadController      Its controller (already unpossessed).
+     * @param Killer              Killing actor (nullptr = environmental).
+     * @param ReplaySlice         Recorded data slice.
+     * @param InPlaybackComponent Playback component (nullptr = live cam fallback).
+     * @param InPlaybackSpeed     Speed multiplier from ReplaySettings.
+     * @param InScreenFade        Optional ScreenFadeComponent for fade effects.
      */
     UFUNCTION(BlueprintCallable, Category = "DeathSequence")
     void BeginDeathSequence(ASubmarinePawn* DeadSubmarine,
         AController* DeadController,
         AActor* Killer,
-        UReplayData* ReplaySlice);
+        UReplayData* ReplaySlice,
+        UReplayPlaybackComponent* InPlaybackComponent = nullptr,
+        float                     InPlaybackSpeed = 1.f,
+        UScreenFadeComponent* InScreenFade = nullptr);
 
     /** Skip the death cam and go straight to spectator. */
     UFUNCTION(BlueprintCallable, Category = "DeathSequence")
@@ -145,6 +147,10 @@ private:
     TObjectPtr<UReplayData>        CachedReplaySlice;
     EDeathCamMode                  ActiveDeathCamMode = EDeathCamMode::None;
 
+    UReplayPlaybackComponent* PlaybackComponent = nullptr;
+    UScreenFadeComponent* ScreenFade = nullptr;
+    bool                      bUsingReplayPlayback = false;
+
     // -----------------------------------------------------------------------
     //  Frozen camera (when killer dies before the cam duration ends)
     // -----------------------------------------------------------------------
@@ -154,41 +160,40 @@ private:
     bool bHasValidFrozenFrame = false;
 
     // -----------------------------------------------------------------------
-    //  Death cam fixed 3rd-person distance
-    // -----------------------------------------------------------------------
-    static constexpr float DeathCamThirdPersonRadius = 200.f;
-
-    // -----------------------------------------------------------------------
     //  Internal helpers
     // -----------------------------------------------------------------------
     EDeathCamMode DetermineDeathCamMode(AActor* Killer) const;
 
-    void StartPreDelay();
-    void StartDeathCam();
-    void FinishSequence();
+    // Fade timers — scheduled in StartDeathCam, cosmetic only
+    FTimerHandle FadeInTimerHandle;
+    FTimerHandle FadeOutTimerHandle;
 
+    void StartDeathCam(float InPlaybackSpeed);
+    void FinishSequence();
     void TickDeathCam(float DeltaTime);
+
+    void ScheduleFades(float WallClockDuration);
+    void CancelFadeTimers();
 
     /**
      * Computes the camera world Location+Rotation for the current frame.
      * Returns false if there is nothing to look at.
      */
-    bool ComputeDeathCamTransform(FVector& OutLocation, FRotator& OutRotation) const;
+    bool ComputeReplayDeathCamTransform(FVector& OutLoc, FRotator& OutRot) const;
+    bool ComputeLiveDeathCamTransform(FVector& OutLoc, FRotator& OutRot) const;
 
     /**
      * Estimates the killer's transform from the firing submarine's muzzle.
      * Called when the torpedo hasn't spawned or no longer exists.
      */
-    bool EstimateKillerTransformFromSub(FVector& OutLocation, FRotator& OutRotation) const;
+    bool EstimateKillerTransformFromSub(FVector& OutLoc, FRotator& OutRot) const;
 
     /**
      * Computes a fixed 3rd-person position directly behind TargetActor
      * at DeathCamThirdPersonRadius distance.
      */
-    static void GetThirdPersonBehind(const FVector& TargetLocation,
-        const FRotator& TargetRotation,
-        FVector& OutCamLocation,
-        FRotator& OutCamRotation);
+    static void GetThirdPersonBehind(const FVector& TargetLoc, const FRotator& TargetRot,
+        FVector& OutCamLoc, FRotator& OutCamRot, float Radius);
 
     /** Directly positions the dead controller's view without possessing anything. */
     void ApplyViewToController(const FVector& Location, const FRotator& Rotation) const;

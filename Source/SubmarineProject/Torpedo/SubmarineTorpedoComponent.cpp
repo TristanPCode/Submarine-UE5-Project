@@ -110,8 +110,10 @@ void USubmarineTorpedoComponent::TickProgressiveReload(float DeltaTime)
             if (CanFire())
                 OnReadyToFire.Broadcast();
 
-            UE_LOG(LogTemp, Log, TEXT("[TorpedoComp] Progressive reload: %d/%d"),
-                CurrentNormalTorpedoes, NormalTorpedoCapacity);
+            if (bDebugReloadLogs) {
+                UE_LOG(LogTemp, Log, TEXT("[TorpedoComp] Progressive reload: %d/%d"),
+                    CurrentNormalTorpedoes, NormalTorpedoCapacity);
+            }
         }
     }
 }
@@ -133,7 +135,9 @@ void USubmarineTorpedoComponent::TickFullReload(float DeltaTime)
     {
         bReloading = true;
         ReloadTimeRemaining = FullReloadCooldown;
-        UE_LOG(LogTemp, Log, TEXT("[TorpedoComp] Full reload started (%.1fs)"), FullReloadCooldown);
+        if (bDebugReloadLogs) {
+            UE_LOG(LogTemp, Log, TEXT("[TorpedoComp] Full reload started (%.1fs)"), FullReloadCooldown);
+        }
     }
     else
     {
@@ -150,8 +154,10 @@ void USubmarineTorpedoComponent::TickFullReload(float DeltaTime)
             if (CanFire())
                 OnReadyToFire.Broadcast();
 
-            UE_LOG(LogTemp, Log, TEXT("[TorpedoComp] Full reload complete: %d/%d"),
-                CurrentNormalTorpedoes, NormalTorpedoCapacity);
+            if (bDebugReloadLogs) {
+                UE_LOG(LogTemp, Log, TEXT("[TorpedoComp] Full reload complete: %d/%d"),
+                    CurrentNormalTorpedoes, NormalTorpedoCapacity);
+            }
         }
     }
 }
@@ -183,19 +189,25 @@ ATorpedoPawn* USubmarineTorpedoComponent::FireNormalTorpedo()
 
     if (!CanFire())
     {
-        UE_LOG(LogTemp, Warning, TEXT("[TorpedoComp] Cannot fire — cooldown %.2fs remaining"),
-            FireCooldownRemaining);
+        if (bDebugCooldownLogs) {
+            UE_LOG(LogTemp, Warning, TEXT("[TorpedoComp] Cannot fire — cooldown %.2fs remaining"),
+                FireCooldownRemaining);
+        }
         return nullptr;
     }
     if (CurrentNormalTorpedoes <= 0)
     {
-        UE_LOG(LogTemp, Warning, TEXT("[TorpedoComp] Cannot fire — no normal torpedoes"));
+        if (bDebugCooldownLogs) {
+            UE_LOG(LogTemp, Warning, TEXT("[TorpedoComp] Cannot fire — no normal torpedoes"));
+        }
         return nullptr;
     }
     if (!NormalTorpedoBlueprintClass)
     {
-        UE_LOG(LogTemp, Error,
-            TEXT("[TorpedoComp] NormalTorpedoBlueprintClass not set! Assign it in the submarine Blueprint."));
+        if (bDebugCooldownLogs) {
+            UE_LOG(LogTemp, Error,
+                TEXT("[TorpedoComp] NormalTorpedoBlueprintClass not set! Assign it in the submarine Blueprint."));
+        }
         return nullptr;
     }
 
@@ -219,8 +231,10 @@ ATorpedoPawn* USubmarineTorpedoComponent::FireNormalTorpedo()
         bReloading = false; // will be picked up next tick
     }
 
-    UE_LOG(LogTemp, Log, TEXT("[TorpedoComp] Normal fired. Remaining: %d/%d"),
-        CurrentNormalTorpedoes, NormalTorpedoCapacity);
+    if (bDebugCooldownLogs) {
+        UE_LOG(LogTemp, Log, TEXT("[TorpedoComp] Normal fired. Remaining: %d/%d"),
+            CurrentNormalTorpedoes, NormalTorpedoCapacity);
+    }
 
     return Torpedo;
 }
@@ -238,19 +252,25 @@ ATorpedoPawn* USubmarineTorpedoComponent::FireSpecialTorpedo()
 
     if (!CanFire())
     {
-        UE_LOG(LogTemp, Warning, TEXT("[TorpedoComp] Cannot fire — cooldown %.2fs remaining"),
-            FireCooldownRemaining);
+        if (bDebugCooldownLogs) {
+            UE_LOG(LogTemp, Warning, TEXT("[TorpedoComp] Cannot fire — cooldown %.2fs remaining"),
+                FireCooldownRemaining);
+        }
         return nullptr;
     }
     if (CurrentSpecialTorpedoes <= 0)
     {
-        UE_LOG(LogTemp, Warning, TEXT("[TorpedoComp] Cannot fire — no special torpedoes"));
+        if (bDebugCooldownLogs) {
+            UE_LOG(LogTemp, Warning, TEXT("[TorpedoComp] Cannot fire — no special torpedoes"));
+        }
         return nullptr;
     }
     if (!SpecialTorpedoBlueprintClass)
     {
-        UE_LOG(LogTemp, Error,
-            TEXT("[TorpedoComp] SpecialTorpedoBlueprintClass not set! Assign it in the submarine Blueprint."));
+        if (bDebugCooldownLogs) {
+            UE_LOG(LogTemp, Error,
+                TEXT("[TorpedoComp] SpecialTorpedoBlueprintClass not set! Assign it in the submarine Blueprint."));
+        }
         return nullptr;
     }
 
@@ -268,8 +288,10 @@ ATorpedoPawn* USubmarineTorpedoComponent::FireSpecialTorpedo()
         SpecialTorpedoCharacteristics ? SpecialTorpedoCharacteristics->TorpedoType : ETorpedoType::Heavy,
         Torpedo);
 
-    UE_LOG(LogTemp, Log, TEXT("[TorpedoComp] Special fired. Remaining: %d/%d"),
-        CurrentSpecialTorpedoes, SpecialTorpedoCapacity);
+    if (bDebugCooldownLogs) {
+        UE_LOG(LogTemp, Log, TEXT("[TorpedoComp] Special fired. Remaining: %d/%d"),
+            CurrentSpecialTorpedoes, SpecialTorpedoCapacity);
+    }
 
     return Torpedo;
 }
@@ -312,7 +334,9 @@ ATorpedoPawn* USubmarineTorpedoComponent::SpawnTorpedo(
 
     if (!Torpedo)
     {
-        UE_LOG(LogTemp, Error, TEXT("[TorpedoComp] SpawnActorDeferred returned nullptr!"));
+        if (bDebugMainMessages) {
+            UE_LOG(LogTemp, Error, TEXT("[TorpedoComp] SpawnActorDeferred returned nullptr!"));
+        }
         return nullptr;
     }
 

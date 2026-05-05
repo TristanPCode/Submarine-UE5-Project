@@ -3,29 +3,11 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "TorpedoCharacteristics.h"   // ETorpedoType
+//#include "SubmarineDelegates.h"
 #include "SubmarineTorpedoComponent.generated.h"
 
 class ATorpedoPawn;
 class USubmarineCharacteristics;
-
-// -----------------------------------------------------------------------------
-//  Reload mode
-// -----------------------------------------------------------------------------
-UENUM(BlueprintType)
-enum class ETorpedoReloadMode : uint8
-{
-    /**
-     * One torpedo reloads at a time using ProgressiveReloadCooldown.
-     * Reload runs continuously whenever below capacity.
-     */
-    Progressive,
-
-    /**
-     * All torpedoes reload at once using FullReloadCooldown.
-     * Timer only starts when count reaches 0.
-     */
-    Full
-};
 
 // -----------------------------------------------------------------------------
 //  Delegates
@@ -55,6 +37,25 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnFireCooldownComplete);
  * Use this for the "ready to fire" HUD indicator.
  */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnReadyToFire);
+
+// -----------------------------------------------------------------------------
+//  Reload mode
+// -----------------------------------------------------------------------------
+UENUM(BlueprintType)
+enum class ETorpedoReloadMode : uint8
+{
+    /**
+     * One torpedo reloads at a time using ProgressiveReloadCooldown.
+     * Reload runs continuously whenever below capacity.
+     */
+    Progressive,
+
+    /**
+     * All torpedoes reload at once using FullReloadCooldown.
+     * Timer only starts when count reaches 0.
+     */
+    Full
+};
 
 // -----------------------------------------------------------------------------
 //  Component
@@ -246,6 +247,22 @@ public:
     /** Fire cooldown expired AND ammo available — ideal for "ready" HUD flash */
     UPROPERTY(BlueprintAssignable, Category = "Torpedo|Events")
     FOnReadyToFire OnReadyToFire;
+
+    // -------------------------------------------------------------------------
+    //  Debug
+    // -------------------------------------------------------------------------
+
+    /** If true, logs main messages process. */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Debug")
+    bool bDebugMainMessages = false;
+
+    /** If true, logs "Cannot fire — cooldown Xs remaining" warnings. */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Debug")
+    bool bDebugCooldownLogs = false;
+
+    /** If true, logs reload progress ("Progressive reload: X/Y"). */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Debug")
+    bool bDebugReloadLogs = false;
 
 private:
     // Spawn helper

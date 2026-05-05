@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using UnrealBuildTool;
+using System.IO;
 
 public class SubmarineProject : ModuleRules
 {
@@ -12,12 +13,25 @@ public class SubmarineProject : ModuleRules
 
 		PrivateDependencyModuleNames.AddRange(new string[] {  });
 
-		// Uncomment if you are using Slate UI
-		// PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });
-		
-		// Uncomment if you are using online features
-		// PrivateDependencyModuleNames.Add("OnlineSubsystem");
+        PublicIncludePaths.AddRange(new string[]
+        {
+            Path.Combine(ModuleDirectory, ""),
+            Path.Combine(ModuleDirectory, "CameraEdit"),
+            Path.Combine(ModuleDirectory, "Death"),
+            Path.Combine(ModuleDirectory, "Delegate"),
+            Path.Combine(ModuleDirectory, "HUD"),
+            Path.Combine(ModuleDirectory, "Replay"),
+            Path.Combine(ModuleDirectory, "Submarine"),
+            Path.Combine(ModuleDirectory, "Torpedo"),
+            Path.Combine(ModuleDirectory, "UI")
+        });
 
-		// To include OnlineSubsystemSteam, add it to the plugins section in your uproject file with the Enabled attribute set to true
-	}
+        // Uncomment if you are using Slate UI
+        // PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });
+
+        // Uncomment if you are using online features
+        // PrivateDependencyModuleNames.Add("OnlineSubsystem");
+
+        // To include OnlineSubsystemSteam, add it to the plugins section in your uproject file with the Enabled attribute set to true
+    }
 }

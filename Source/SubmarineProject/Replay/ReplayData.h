@@ -2,6 +2,8 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/SaveGame.h"
+#include "Engine/DataAsset.h"
+#include "NiagaraSystem.h"
 #include "ReplayData.generated.h"
 
 // ---------------------------------------------------------------------------
@@ -44,7 +46,13 @@ struct FReplayActorFrame
     UPROPERTY()
     int32 SpecialTorpedoes = 0;
 
-    /** True if the actor was alive/valid at this timestamp */
+    /**
+     * Always true while the actor exists in TActorIterator.
+     * For submarines: false when health reaches 0.
+     * For torpedoes: the actor simply disappears from the recording when
+     * it calls Destroy() -- there is never an explicit false frame.
+     * Playback uses presence/absence detection to find torpedo death time.
+     */
     UPROPERTY()
     bool bAlive = true;
 };
@@ -81,15 +89,11 @@ struct FReplayTickEntry
     UPROPERTY()
     float Timestamp = 0.f;
 
-    /**
-     * Parallel arrays — index N in ActorNames matches index N in ActorFrames.
-     * We store names/paths instead of pointers so this is serialisable.
-     */
-    UPROPERTY()
-    TArray<FString> ActorNames;
+    /** Stable per-instance GUIDs -- index matches ActorFrames. */
+    UPROPERTY() TArray<FGuid> ActorGuids;
 
-    UPROPERTY()
-    TArray<FReplayActorFrame> ActorFrames;
+    /** Per-actor transform + state data -- index matches ActorGuids. */
+    UPROPERTY() TArray<FReplayActorFrame> ActorFrames;
 };
 
 // ---------------------------------------------------------------------------
@@ -103,11 +107,35 @@ struct FReplayKeyframe
     UPROPERTY()
     float Timestamp = 0.f;
 
-    UPROPERTY()
-    TArray<FString> ActorNames;
+    /** Stable per-instance GUIDs -- index matches ActorSnapshots. */
+    UPROPERTY() TArray<FGuid> ActorGuids;
 
     UPROPERTY()
     TArray<FReplayActorSnapshot> ActorSnapshots;
+};
+
+// ---------------------------------------------------------------------------
+//  VFX event -- a Niagara effect that should play at a specific moment
+//  during replay.  Captured by the recorder when Explode() fires; played
+//  back by the playback component at the matching timestamp.
+//
+//  Using TSoftObjectPtr so the asset reference survives serialisation without
+//  forcing a hard load at record time.
+// ---------------------------------------------------------------------------
+USTRUCT(BlueprintType)
+struct FReplayVFXEvent
+{
+    GENERATED_BODY()
+
+    /** World time when this effect should fire during playback */
+    UPROPERTY() float Timestamp = 0.f;
+
+    UPROPERTY() FVector   Location = FVector::ZeroVector;
+    UPROPERTY() FRotator  Rotation = FRotator::ZeroRotator;
+    UPROPERTY() FVector   Scale = FVector::OneVector;
+
+    /** The Niagara system asset to spawn */
+    UPROPERTY() TSoftObjectPtr<UNiagaraSystem> NiagaraAsset;
 };
 
 // ---------------------------------------------------------------------------
@@ -137,6 +165,13 @@ public:
     FString Label;
 
     // -----------------------------------------------------------------------
+    //  GUID -> display name registry
+    //  Populated once per actor when first seen by the recorder.
+    //  Read-only by the playback side (used only for log messages).
+    // -----------------------------------------------------------------------
+    UPROPERTY() TMap<FGuid, FString> GuidToDisplayName;
+
+    // -----------------------------------------------------------------------
     //  Recording data
     // -----------------------------------------------------------------------
 
@@ -154,6 +189,13 @@ public:
     UPROPERTY()
     TArray<FReplayKeyframe> Keyframes;
 
+    /**
+     * All VFX events captured during recording (torpedo explosions,
+     * submarine death explosions, etc.).  Sorted ascending by Timestamp.
+     * Playback spawns these at the matching world time.
+     */
+    UPROPERTY() TArray<FReplayVFXEvent> VFXEvents;
+
     // -----------------------------------------------------------------------
     //  Helpers
     // -----------------------------------------------------------------------
@@ -161,6 +203,13 @@ public:
     /** Total recorded duration in seconds */
     UFUNCTION(BlueprintPure, Category = "Replay")
     float GetDuration() const { return RecordEndTime - RecordStartTime; }
+
+    /** Display name for a GUID, or "Unknown" if not registered. */
+    FString GetDisplayName(const FGuid& Guid) const
+    {
+        const FString* Found = GuidToDisplayName.Find(Guid);
+        return Found ? *Found : FString(TEXT("Unknown"));
+    }
 
     /**
      * Returns the index of the last keyframe whose timestamp is <= TargetTime.

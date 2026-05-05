@@ -3,6 +3,8 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Pawn.h"
 #include "SubmarineCharacteristics.h"
+//#include "SubmarineTorpedoComponent.h"
+//#include "TrackableSubmarine.h"
 #include "SubmarinePawn.generated.h"
 
 // -- Forward declarations ---------------------------------------------------
@@ -20,7 +22,7 @@ struct FInputActionValue;
 //  ASubmarinePawn
 // -----------------------------------------------------------------------------
 UCLASS()
-class SUBMARINEPROJECT_API ASubmarinePawn : public APawn
+class SUBMARINEPROJECT_API ASubmarinePawn : public APawn//, public ITrackableSubmarine
 {
     GENERATED_BODY()
 
@@ -38,6 +40,10 @@ public:
     void SetExternalYawVelocity(float V) { ExternalYawVelocity = V; }
     void SetExternalPitchVelocity(float V) { ExternalPitchVelocity = V; }
 
+    /** Returns the main submarine body mesh (used by collision component for bounds). */
+    UFUNCTION(BlueprintPure, Category = "Submarine")
+    UStaticMeshComponent* GetSubmarineBody() const { return SubmarineBody; }
+
     // True once this submarine has been killed.
     // Set by the GameMode via FreezeOnDeath() before the death sequence starts.
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Submarine|State")
@@ -45,10 +51,11 @@ public:
 
     /**
      * Called by the GameMode immediately when this submarine dies.
-     * - Unpossesses the controller (stops all input).
-     * - Disables tick so movement/physics stop.
-     * - Fires are blocked because bDead is checked in FireNormalTorpedo /
-     *   FireSpecialTorpedo on the TorpedoComponent.
+     * - Hides the actor from ALL players (SetActorHiddenInGame).
+     * - Disables all collisions.
+     * - Stops all movement and physics.
+     * - Unpossesses the controller.
+     * - Disables tick.
      */
     UFUNCTION(BlueprintCallable, Category = "Submarine|State")
     void FreezeOnDeath();
@@ -152,7 +159,6 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Submarine|Camera")
     FVector CameraOffset = FVector(245.f, 0.f, 140.f);
 
-    USubmarineCollisionComponent* GetCollisionHandler() const { return CollisionHandler; }
 
     /** Switch camera from external code (spectator/replay system) */
     UFUNCTION(BlueprintCallable, Category = "Submarine|Camera")
@@ -160,6 +166,55 @@ public:
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Submarine|Camera")
     TObjectPtr<UCameraBlendSettings> CameraBlendSettings;
+
+    // -- Blueprint collision forwarding (thin wrappers -> CollisionComponent) -
+
+    /**
+     * Call from Blueprint Event Hit.
+     * Delegates to CollisionHandler->RegisterHitFromBlueprint().
+     */
+    UFUNCTION(BlueprintCallable, Category = "Submarine|Collision")
+    void RegisterHitFromBlueprint(const FHitResult& Hit);
+
+    /**
+     * Call from Blueprint Event Hit.
+     * Delegates to CollisionHandler->HandleHitFromBlueprint().
+     */
+    UFUNCTION(BlueprintCallable, Category = "Submarine|Collision")
+    void HandleHitFromBlueprint(const FHitResult& Hit);
+
+
+    // -- Public Getters ----------------------------------------------------
+
+    USubmarineCollisionComponent* GetCollisionHandler() const { return CollisionHandler; }
+    //USubmarineTorpedoComponent* GetTorpedoHandler() const { return TorpedoHandler; }
+
+
+    // -------------------------------------------------------------------
+    //  ITrackableSubmarine interface
+    // -------------------------------------------------------------------
+    /*virtual float              GetHealthRatio()          const override;
+    virtual float              GetCurrentSpeed()         const override;
+    virtual float              GetCurrentDepth()         const override;
+    virtual float              GetCurrentPitch()         const override;
+    virtual int32              GetVerticalStateIndex()   const override;
+    virtual int32              GetVerticalStateCount()   const override;
+    virtual ELinearSpeedState  GetLinearSpeedState()     const override;
+    virtual int32              GetNormalAmmoCount()      const override;
+    virtual int32              GetNormalAmmoCapacity()   const override;
+    virtual int32              GetSpecialAmmoCount()     const override;
+    virtual int32              GetSpecialAmmoCapacity()  const override;
+    virtual float              GetFireCooldownRatio()    const override;
+    virtual float              GetReloadRatio()          const override;
+    virtual bool               GetIsReloading()          const override;
+    virtual FText              GetDisplayName()          const override;
+    virtual const TArray<FDetectedEntry>& GetDetectionEntries() const override;
+    virtual FOnSubmarineDamaged&     GetOnDamagedDelegate()      override;
+    virtual FOnAmmoChanged&          GetOnAmmoChangedDelegate()   override;
+    virtual FOnTorpedoFired&         GetOnTorpedoFiredDelegate()  override;
+    virtual FOnReadyToFire&          GetOnReadyToFireDelegate()   override;
+    virtual FOnFireCooldownComplete& GetOnFireCooldownDelegate()  override;
+    virtual FOnLinearStateChanged& GetOnLinearStateChangedDelegate() override;*/
 
 private:
     // -- Components --------------------------------------------------------
@@ -196,23 +251,11 @@ private:
         meta = (AllowPrivateAccess = "true"))
     TObjectPtr<USubmarinePhysicsComponent> PhysicsHandler;
 
-    // -- Overlap, Collision & Anti-stuck collision -------------------------------------
+    /*UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components",
+        meta = (AllowPrivateAccess = "true"))
+    TObjectPtr<USubmarineTorpedoComponent> TorpedoHandler;*/
 
-    struct FHitTracker
-    {
-        /** World time when this actor was first hit in the current continuous sequence */
-        float FirstHitTime = 0.f;
-        /** World time of the most recent hit against this actor */
-        float LastHitTime = 0.f;
-        /** World time when expulsion last fired against this actor */
-        float LastExpulsionTime = -999.f;
-        /** Accumulated impact normals for escape direction */
-        FVector NormalSum = FVector::ZeroVector;
-        int32   NormalCount = 0;
-    };
-
-    /** Per-actor hit tracking for anti-stuck system */
-    TMap<AActor*, FHitTracker> HitTrackers;
+    // -- Overlap -------------------------------------------------------------
 
     UFUNCTION()
     void OnOverlapBegin(UPrimitiveComponent* OverlappedComp, AActor* OtherActor,
@@ -222,19 +265,6 @@ private:
     UFUNCTION()
     void OnOverlapEnd(UPrimitiveComponent* OverlappedComp, AActor* OtherActor,
         UPrimitiveComponent* OtherComp, int32 OtherBodyIndex);
-
-    UFUNCTION(BlueprintCallable, Category = "Submarine|Collision")
-    void HandleHitFromBlueprint(const FHitResult& Hit);
-
-    void RegisterHit(AActor* OtherActor, const FHitResult& Hit);
-    void TickAntiStuck(float DeltaTime);
-
-    /**
-     * Call this from the Blueprint Event Hit to feed the anti-stuck system.
-     * Drag the 'Hit' pin from Event Hit directly into this function.
-     */
-    UFUNCTION(BlueprintCallable, Category = "Submarine|Collision")
-    void RegisterHitFromBlueprint(const FHitResult& Hit);
 
     // -- Linear state machine internals -------------------------------------
 
@@ -251,6 +281,9 @@ private:
     int32 ForwardHoldIntervalsConsumed = 0;
 
     void IncrementLinearState(int32 Direction); // Direction: +1 forward, -1 backward
+
+    /*UPROPERTY(BlueprintAssignable, Category = "Submarine|Events")
+    FOnLinearStateChanged OnLinearStateChanged;*/
 
     // -- Vertical angle internals ------------------------------------------
 
@@ -354,7 +387,7 @@ private:
     void OnCameraPeriscopeTriggered(const FInputActionValue& Value);
     void OnCameraPeriscopeCompleted(const FInputActionValue& Value);
 
-    void OnCamera3rdPersonStarted(const FInputActionValue& Value);
+    void OnCamera3rdPersonStarted(const FInputActionValue& Value); 
     void OnCamera3rdPersonTriggered(const FInputActionValue& Value);
     void OnCamera3rdPersonCompleted(const FInputActionValue& Value);
 

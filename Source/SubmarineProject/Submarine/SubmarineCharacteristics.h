@@ -456,6 +456,44 @@ public:
         EditCondition = "bEnableAntiStuckPhysics"))
     float AntiStuckCooldown = 0.15f;
 
+    // -- Collision Cooldowns -------------------------------------------------
+
+    /**
+     * Minimum seconds between successive damage applications from the same actor.
+     * Prevents rotation-contact spam from draining HP every tick.
+     * Set to 0 to disable (no cooldown).
+     * Actors whose class appears in DamageCooldownExemptClasses bypass this.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Collision|Cooldowns",
+        meta = (ClampMin = "0.0"))
+    float DamageCooldown = 0.5f;
+
+    /**
+     * Minimum seconds between successive bounce impulse applications from the same actor.
+     * Prevents rotation-contact spam from applying angular/linear kicks every tick.
+     * Set to 0 to disable.
+     * Actors whose class appears in BounceCooldownExemptClasses bypass this.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Collision|Cooldowns",
+        meta = (ClampMin = "0.0"))
+    float BounceCooldown = 0.1f;
+
+    /**
+     * Classes that are EXEMPT from DamageCooldown.
+     * These actors can always apply damage regardless of the cooldown timer.
+     * Default: ATorpedoPawn (torpedoes should always deal their full damage on hit).
+     * Add other classes here if needed (e.g. a special mine BP class).
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Collision|Cooldowns")
+    TArray<TSubclassOf<AActor>> DamageCooldownExemptClasses;
+
+    /**
+     * Classes that are EXEMPT from BounceCooldown.
+     * Default: ATorpedoPawn.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Collision|Cooldowns")
+    TArray<TSubclassOf<AActor>> BounceCooldownExemptClasses;
+
     // -- Physics: General ----------------------
 
     /** Gravity acceleration (cm/s²) — positive value, applied downward */
@@ -569,6 +607,18 @@ public:
     /** Frequency (in seconds) of the Physics log */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Physics|Debug", meta = (ClampMin = "0.0", EditCondition = "bEnablePhysicsLogs"))
     float PhysicsLogFrequency = 2.0f;
+
+    /** Log [CollisionComp] messages (damage taken, death broadcast) */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Physics|Debug")
+    bool bLogCollisionComp = true;
+
+    /** Log [FreezeOnDeath] messages (component hide, camera cache) */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Physics|Debug")
+    bool bLogFreezeOnDeath = true;
+
+    /** Log [AntiStuck] messages (anti-stuck fire events) */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Physics|Debug")
+    bool bLogAntiStuck = true;
 
     // -- Camera (POV) -----------------------------
 
@@ -694,4 +744,10 @@ public:
      */
     UFUNCTION(BlueprintCallable, Category = "Submarine|Collision")
     FCollisionBounceEntry GetCollisionBounce(ESubmarineCollisionType CollisionType) const;
+
+
+    // -- Debug ---------------
+    /** If true, logs submarine movement data every 2 seconds (the [Move] lines). */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Debug")
+    bool bDebugMovementLogs = false;
 };

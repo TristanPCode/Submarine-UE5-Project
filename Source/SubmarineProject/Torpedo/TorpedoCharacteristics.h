@@ -246,4 +246,17 @@ public:
     /** Pivot height offset above torpedo centre for 3rd person look-at */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Torpedo|Camera|ThirdPerson")
     float ThirdPersonPivotOffsetZ = 0.f;
+
+    // -- Debug -------------------------------------------------------------
+    /** If true, logs torpedo main messages. */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Debug")
+    bool bDebugMainMessages = false;
+
+    /** If true, logs torpedo velocity/speed every tick (the [Torpedo] Vel= lines). */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Debug")
+    bool bDebugVelocityLogs = false;
+
+    /** If true, logs torpedo hit/explode events (already useful, keep on by default). */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Debug")
+    bool bDebugHitLogs = true;
 };

@@ -1,6 +1,7 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
 #include "SubmarineCharacteristics.h"
+#include "Torpedo/TorpedoPawn.h"
 
 USubmarineCharacteristics::USubmarineCharacteristics()
 {
@@ -53,6 +54,18 @@ void USubmarineCharacteristics::PostInitProperties()
 
         // Default fallback
         CollisionBounceTable.Add({ ESubmarineCollisionType::Default, 500.f, 0.0f, false, 0.0f, 0.0f, 0.0f, 0, 0.f });
+    }
+
+    // Default cooldown exempt classes: torpedoes bypass damage + bounce cooldowns
+    // so they always apply their full effects on direct hit.
+    if (DamageCooldownExemptClasses.Num() == 0)
+    {
+        DamageCooldownExemptClasses.Add(ATorpedoPawn::StaticClass());
+    }
+
+    if (BounceCooldownExemptClasses.Num() == 0)
+    {
+        BounceCooldownExemptClasses.Add(ATorpedoPawn::StaticClass());
     }
 }
 
