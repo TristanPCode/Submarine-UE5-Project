@@ -31,8 +31,6 @@ void USubmarineHUDComponent::BeginPlay()
 
     OnTrackedSubmarineChanged.AddDynamic(
         this, &USubmarineHUDComponent::HandleTrackedSubmarineChanged);
-
-    CreateHUDWidget();
 }
 
 // ---------------------------------------------------------------------------
@@ -132,6 +130,68 @@ void USubmarineHUDComponent::SetHUDVisible(bool bVisible)
 }
 
 // ---------------------------------------------------------------------------
+//  SwapHUDSettings
+// ---------------------------------------------------------------------------
+
+void USubmarineHUDComponent::SwapHUDSettings(USubmarineHUDSettings* NewSettings)
+{
+    if (!NewSettings)
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("[HUDComponent] SwapHUDSettings: NewSettings is null. "
+                "Hiding HUD."));
+        if (RootWidget)
+            RootWidget->SetVisibility(ESlateVisibility::Hidden);
+        return;
+    }
+
+    // Update cached settings
+    HUDSettings = NewSettings;
+    if (HUDSettings->DebugSettings)
+        DebugSettings = HUDSettings->DebugSettings;
+
+    if (!RootWidget)
+    {
+        // First time -- create the widget
+        CreateHUDWidget();
+        return;  // CreateHUDWidget calls InitializeHUD internally
+    }
+
+    // Widget already exists -- reinitialize modules
+    // RootWidget->InitializeHUD tears down old modules and builds new ones
+    RootWidget->InitializeHUD(NewSettings);
+
+    // Re-apply tracked submarine so modules bind correctly
+    if (TrackedActor.IsValid())
+        RootWidget->SetDataSource(TrackedInterface);
+
+    // Restore visibility in case it was hidden
+    RootWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
+
+    // Deferred geometry refresh: modules that depend on canvas size
+    // (PositionalIndicator, NumericDisplay) cache geometry in NativeTick.
+    // After a swap, the new modules have zero cached canvas size until
+    // UMG runs a layout pass. Force a SetDataSource next tick so they
+    // re-evaluate their geometry with real values.
+    {
+        TWeakObjectPtr<UMainHUDWidget> WeakRoot(RootWidget);
+        if (GetWorld())
+            GetWorld()->GetTimerManager().SetTimerForNextTick([WeakRoot]()
+                {
+                    if (WeakRoot.IsValid())
+                        WeakRoot->SetDataSource(WeakRoot->GetCachedDataSource());
+                });
+    }
+
+    if (ShouldLog(DebugSettings ? DebugSettings->bLogHUDCreation : false))
+        UE_LOG(LogTemp, Log,
+            TEXT("[HUDComponent] SwapHUDSettings: swapped to '%s'  "
+                "TrackedActor='%s'"),
+            *NewSettings->GetName(),
+            TrackedActor.IsValid() ? *TrackedActor->GetName() : TEXT("None"));
+}
+
+// ---------------------------------------------------------------------------
 //  CreateHUDWidget
 // ---------------------------------------------------------------------------
 void USubmarineHUDComponent::CreateHUDWidget()
@@ -163,6 +223,15 @@ void USubmarineHUDComponent::CreateHUDWidget()
         return;
     }
 
+    // --- Diagnostic dump ---
+    ULocalPlayer* LP = PC->GetLocalPlayer();
+    UE_LOG(LogTemp, Warning,
+        TEXT("[HUDComponent] Diagnostic: PC='%s'  LocalPlayer=%s  IsLocalController=%d  NetMode=%d"),
+        *PC->GetName(),
+        LP ? *LP->GetName() : TEXT("NULL"),
+        PC->IsLocalController() ? 1 : 0,
+        (int32)GetWorld()->GetNetMode());
+
     if (ShouldLog(DebugSettings ? DebugSettings->bLogHUDCreation : false))
         UE_LOG(LogTemp, Log,
             TEXT("[HUDComponent] CreateHUDWidget: creating '%s' for PC='%s'"),
@@ -179,14 +248,50 @@ void USubmarineHUDComponent::CreateHUDWidget()
 
     RootWidget->InitializeHUD(HUDSettings);
 
-    // AddToPlayerScreen: scoped to this player's viewport area (split-screen safe)
+    // AddToPlayerScreen scopes the widget to this PC's local viewport.
+    // This is critical for split-screen: each player's HUD must be scoped
+    // to their own half-screen. AddToViewport puts it on the full screen.
+    // NEVER fall back to AddToViewport -- if this fails, the PC has no
+    // local player yet (timing issue) and the deferred tick will re-try.
     RootWidget->AddToPlayerScreen();
+
+    UE_LOG(LogTemp, Log,
+        TEXT("[HUDComponent] AddToPlayerScreen: PC='%s'  InViewport=%d  "
+            "LocalPlayer=%s"),
+        *PC->GetName(),
+        RootWidget->IsInViewport() ? 1 : 0,
+        LP ? *LP->GetName() : TEXT("NULL -- widget may not appear"));
+
+    if (!RootWidget->IsInViewport())
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("[HUDComponent] AddToPlayerScreen failed for PC='%s'. "
+                "This usually means LocalPlayer is null at widget creation time. "
+                "The deferred SetDataSource tick will re-attempt layout. "
+                "DO NOT fall back to AddToViewport -- it breaks split-screen."),
+            *PC->GetName());
+    }
+
+    // If a submarine was already tracked before widget existed, apply it now
+    if (TrackedActor.IsValid())
+        RootWidget->SetDataSource(TrackedInterface);
+
+    // Force one extra refresh next tick so deferred layout modules
+    // (PositionalIndicator, NumericDisplay) get their canvas size.
+    FTimerHandle RefreshTimer;
+    TWeakObjectPtr<UMainHUDWidget> WeakRoot(RootWidget);
+    GetWorld()->GetTimerManager().SetTimerForNextTick(
+        [WeakRoot]()
+        {
+            if (WeakRoot.IsValid())
+                WeakRoot->SetDataSource(WeakRoot->GetCachedDataSource());
+        });
 
     if (ShouldLog(DebugSettings ? DebugSettings->bLogHUDCreation : false))
         UE_LOG(LogTemp, Log,
-            TEXT("[HUDComponent] HUD created and added to player screen. "
-                "PC='%s'  Modules=%d"),
-            *PC->GetName(), RootWidget->GetModuleCount());
+            TEXT("[HUDComponent] HUD created. PC='%s'  Modules=%d  InViewport=%d"),
+            *PC->GetName(), RootWidget->GetModuleCount(),
+            RootWidget->IsInViewport() ? 1 : 0);
 }
 
 // ---------------------------------------------------------------------------

@@ -7,6 +7,12 @@
 #include "SubmarineSpectatorPawn.h"
 #include "DeathSequenceComponent.h"
 #include "ReplaySettings.h"
+#include "MatchSettingsDataAsset.h"
+#include "RuntimeMatchSettings.h"
+#include "SpawnManagerComponent.h"
+#include "HUD/HUDGlobalDefaults.h"
+#include "Load/SubmarineAssetLoader.h"
+#include "Load/LoadingScreenSettings.h"
 #include "SubmarineGameMode.generated.h"
 
 class ASubmarinePawn;
@@ -15,7 +21,7 @@ class UReplayRecorderComponent;
 class UReplayPlaybackComponent;
 class UReplaySettings;
 class UCameraBlendSettings;
-class UScreenFadeComponent;
+class USubmarineLoadingScreen;
 
 /**
  * Caches killer identity at the moment of death.
@@ -133,6 +139,39 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GameMode|Camera")
     TObjectPtr<UCameraBlendSettings> CameraBlendSettings;
 
+    /** Default match settings DataAsset (assigned in Blueprint editor).
+      * Copied into RuntimeMatchSettings at BeginPlay. Never mutated. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Match")
+    TObjectPtr<UMatchSettingsDataAsset> DefaultMatchSettings;
+
+    /** Global HUD defaults registry (assigned in Blueprint editor). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HUD")
+    TObjectPtr<UHUDGlobalDefaults> HUDGlobalDefaults;
+
+    // -----------------------------------------------------------------------
+    //  Loading screen
+    // -----------------------------------------------------------------------
+
+    /**
+     * Widget class for the loading screen.
+     * Create BP_LoadingScreen inheriting from USubmarineLoadingScreen.
+     * Leave null to skip the loading screen entirely.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Loading")
+    TSubclassOf<USubmarineLoadingScreen> LoadingScreenClass;
+
+    /**
+     * Per-level loading screen artwork and configuration.
+     * Each level/map can have its own DA with different background images.
+     * Leave null for a plain black loading screen.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Loading")
+    TObjectPtr<ULoadingScreenSettings> LoadingScreenSettings;
+
+    /** Minimum time the loading screen is shown (seconds). Useful for testing. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Loading")
+    float MinLoadingScreenTime = 0.f;
+
     // -----------------------------------------------------------------------
     //  Components (visible in editor for easy setup)
     // -----------------------------------------------------------------------
@@ -147,11 +186,36 @@ public:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
     TObjectPtr<UDeathSequenceComponent> DeathSequence;
 
-    /** Drives StartCameraFade for all three phases (gameplay / death / spectator). */
+    /** Spawn manager component. */
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
-    TObjectPtr<UScreenFadeComponent> ScreenFade;
+    TObjectPtr<USpawnManagerComponent> SpawnManager;
+
+    // -----------------------------------------------------------------------
+    //  Match settings
+    // -----------------------------------------------------------------------
+
+    // Resolved at BeginPlay, used by OnAssetsPreloaded.
+    // Stored here temporarily until a menu/GameInstance flow exists.
+    UPROPERTY()
+    TObjectPtr<URuntimeMatchSettings> ActiveRMS;
+    /**
+     * If true, BeginPlay skips normal gameplay spawn and instead loads
+     * the saved replay from DeathReplaySaveSlot.
+     * Set this in BP_SubmarineGameInstance OR toggle here directly for testing.
+     * Will be set to false by BeginPlay after it's consumed.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Replay")
+    bool bIsReplayMode = false;
 
 private:
+
+    /**
+     * Called at the beginning of BeginPlay before FadeIn.
+     */
+    UFUNCTION()
+    void OnAssetsPreloaded();
+
+
     /**
      * Called by DeathSequenceComponent when the sequence is fully complete.
      * Spawns the spectator pawn and destroys the dead submarine mesh.
@@ -166,6 +230,12 @@ private:
      */
     void OnPostDeathRecordingComplete();
 
+    void ShowLoadingScreen();
+    void HideLoadingScreen();
+
+    UFUNCTION()
+    void TickLoadingProgress();
+
     // Kept alive across the death sequence so the handler has valid data
     TWeakObjectPtr<ASubmarinePawn> PendingDeadSub;
     TWeakObjectPtr<AController>    PendingDeadController;
@@ -179,4 +249,19 @@ private:
     /** Timer that fires OnPostDeathRecordingComplete after DeathPreviewDelay. */
     FTimerHandle PostDeathRecordingTimer;
 
+
+    FTimerHandle LoadingProgressTimer;
+
+    UPROPERTY()
+    TObjectPtr<USubmarineLoadingScreen> ActiveLoadingScreen;
+
+    void ExecutePostLoad();
+    float LoadingScreenStartTime = 0.f;
+
+    /* Replay Mode */
+
+    /** Enter replay mode: load replay from disk, skip spawning, set HUD context. */
+    void EnterReplayMode();
+    void ExecuteReplayLoad();
+    void FinishEnterReplayMode(UReplayData* FullReplay);
 };

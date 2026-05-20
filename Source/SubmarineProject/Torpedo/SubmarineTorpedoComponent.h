@@ -91,6 +91,14 @@ public:
     virtual void TickComponent(float DeltaTime, ELevelTick TickType,
         FActorComponentTickFunction* ThisTickFunction) override;
 
+    /**
+     * Called after all Blueprint defaults and CDO overrides are applied.
+     * This is where we safely initialize current ammo from capacity,
+     * since BeginPlay may fire before BP property overrides propagate
+     * to the component on some initialization paths.
+     */
+    virtual void InitializeComponent() override;
+
     // -------------------------------------------------------------------------
     //  Blueprint class references
     // -------------------------------------------------------------------------
@@ -277,4 +285,5 @@ private:
     // Reload internal state
     bool  bReloading = false;
     bool  bWasOnCooldown = false; // edge-detect for fire cooldown delegate
+    bool  bAmmoInitialized = false; // guard against double InitializeComponent
 };

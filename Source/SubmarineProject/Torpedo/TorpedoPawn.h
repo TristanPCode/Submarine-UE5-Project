@@ -53,6 +53,7 @@ public:
     virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
     UStaticMeshComponent* GetTorpedoBody() const { return TorpedoBody; }
     float GetCurrentSpeed() const;
+    float GetLifetimeElapsed() const { return LifetimeElapsed; }
 
 
     // -- Setup (called by SubmarineTorpedoComponent after deferred spawn) ---

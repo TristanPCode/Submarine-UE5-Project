@@ -52,6 +52,10 @@ public:
     UFUNCTION(BlueprintPure, Category = "HUD")
     AActor* GetTrackedActor() const { return TrackedActor.Get(); }
 
+    /**
+     * Expose the tracked interface for HUDTransitionManager to re-apply
+     * after a DataAsset swap.
+     */
     const TScriptInterface<ITrackableSubmarine>& GetTrackedInterface() const
     {
         return TrackedInterface;
@@ -62,6 +66,15 @@ public:
 
     UFUNCTION(BlueprintCallable, Category = "HUD")
     void SetHUDVisible(bool bVisible);
+
+    /**
+     * Swap the HUD DataAsset and fully reinitialize all modules.
+     * Called by UHUDTransitionManager during context transitions.
+     * Tears down existing modules, builds new ones from NewSettings.
+     * Re-applies the currently tracked submarine after reinitialization.
+     */
+    UFUNCTION(BlueprintCallable, Category = "HUD")
+    void SwapHUDSettings(USubmarineHUDSettings* NewSettings);
 
     // -----------------------------------------------------------------------
     //  Delegates

@@ -10,6 +10,7 @@ class USubmarineHUDSettings;
 class USubmarineHUDDebugSettings;
 class UBaseHUDModule;
 class UCanvasPanel;
+class USubmarineHUDSettings;
 
 /**
  * UMainHUDWidget
@@ -40,6 +41,14 @@ public:
     UFUNCTION(BlueprintPure, Category = "MainHUD")
     int32 GetModuleCount() const { return ActiveModules.Num(); }
 
+    const TScriptInterface<ITrackableSubmarine>& GetCachedDataSource() const
+    {
+        return CachedDataSource;
+    }
+
+    UCanvasPanel* GetRootCanvas() const { return RootCanvas; }
+    USubmarineHUDSettings* GetCachedSettings() const { return CachedSettings; }
+
 protected:
 
     UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
@@ -66,7 +75,7 @@ private:
     UBaseHUDModule* CreateAndAddModule(const FHUDModuleConfig& ModuleConfig);
 
     static void ApplyLayoutToSlot(class UCanvasPanelSlot* CanvasSlot,
-        const FHUDModuleConfig& Config);
+        const FHUDModuleConfig& Config, APlayerController* OwningPlayer, USubmarineHUDDebugSettings* InDebugSettings, FVector2D InDesignResolution);
 
     void TearDownModules();
 

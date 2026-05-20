@@ -14,15 +14,23 @@ void UHealthBarModule::BindToDataSource()
     UObject* Obj = DataSource.GetObject();
     if (!IsValid(Obj))
     {
-        if (ShouldLog(DebugSettings ? DebugSettings->bLogModuleBinding : false))
+        if (ShouldLog(DebugSettings ? (DebugSettings->bLogModuleBinding && DebugSettings->bLogHealthBar) : false))
             UE_LOG(LogTemp, Warning,
                 TEXT("[HealthBarModule] BindToDataSource: invalid DataSource -- skipping"));
         return;
     }
 
-    if (ShouldLog(DebugSettings ? DebugSettings->bLogModuleBinding : false))
+    if (ShouldLog(DebugSettings ? (DebugSettings->bLogModuleBinding && DebugSettings->bLogHealthBar) : false))
         UE_LOG(LogTemp, Log,
             TEXT("[HealthBarModule] BindToDataSource: '%s'"), *Obj->GetName());
+
+    // Diagnostic: confirm widget pointers are bound from Blueprint
+    if (ShouldLog(DebugSettings ? DebugSettings->bLogHealthBar : false))
+        UE_LOG(LogTemp, Log,
+            TEXT("[HealthBar] Widget pointers -- BackgroundImage=%s  FillImage=%s  OverlayImage=%s"),
+            BackgroundImage ? TEXT("OK") : TEXT("NULL -- check BindWidget name in BP"),
+            FillImage ? TEXT("OK") : TEXT("NULL -- check BindWidget name in BP"),
+            OverlayImage ? TEXT("OK") : TEXT("NULL -- check BindWidget name in BP"));
 
     // Create the fill material dynamic instance (once per data source)
     if (!CreateFillMID())
@@ -46,7 +54,7 @@ void UHealthBarModule::UnbindFromDataSource()
     UObject* Obj = DataSource.GetObject();
     if (!IsValid(Obj)) return;
 
-    if (ShouldLog(DebugSettings ? DebugSettings->bLogModuleBinding : false))
+    if (ShouldLog(DebugSettings ? (DebugSettings->bLogModuleBinding && DebugSettings->bLogHealthBar) : false))
         UE_LOG(LogTemp, Log,
             TEXT("[HealthBarModule] UnbindFromDataSource: '%s'"), *Obj->GetName());
 
@@ -64,7 +72,7 @@ void UHealthBarModule::UnbindFromDataSource()
 // ---------------------------------------------------------------------------
 void UHealthBarModule::RefreshVisuals_Implementation()
 {
-    if (ShouldLog(DebugSettings ? DebugSettings->bLogModuleRefresh : false))
+    if (ShouldLog(DebugSettings ? (DebugSettings->bLogModuleRefresh && DebugSettings->bLogHealthBar) : false))
         UE_LOG(LogTemp, Log, TEXT("[HealthBarModule] RefreshVisuals"));
 
     // Apply background and overlay textures (done once, idempotent)
@@ -78,6 +86,20 @@ void UHealthBarModule::RefreshVisuals_Implementation()
     {
         if (UTexture2D* OvTex = Config.GetTexture(HUDConfigKeys::Overlay))
             OverlayImage->SetBrushFromTexture(OvTex, /*bMatchSize=*/false);
+    }
+
+    // --- Fill ---
+    // FillMID is created in BindToDataSource. On the very first RefreshVisuals
+    // call (triggered by SetConfig before any DataSource is set), FillMID will
+    // be null -- that is expected and not an error.
+    if (!FillMID && IsValid(DataSource.GetObject()))
+    {
+        // DataSource is valid but MID is missing -- something went wrong in Bind.
+        // Attempt a recovery create here.
+        UE_LOG(LogTemp, Warning,
+            TEXT("[HealthBar] RefreshVisuals: FillMID is null but DataSource is valid. "
+                "Attempting recovery CreateFillMID."));
+        CreateFillMID();
     }
 
     // Push health to fill material
@@ -100,7 +122,7 @@ void UHealthBarModule::OnDamaged(float DamageAmount, AActor* DamageCauser)
     // Skip if ratio unchanged (e.g. invincibility frames or overkill)
     if (FMath::IsNearlyEqual(NewRatio, LastHealthRatio, 0.001f)) return;
 
-    if (ShouldLog(DebugSettings ? DebugSettings->bLogModuleRefresh : false))
+    if (ShouldLog(DebugSettings ? (DebugSettings->bLogModuleRefresh && DebugSettings->bLogHealthBar) : false))
         UE_LOG(LogTemp, Log,
             TEXT("[HealthBarModule] OnDamaged: damage=%.1f  ratio=%.3f -> %.3f"),
             DamageAmount, LastHealthRatio, NewRatio);
@@ -115,27 +137,52 @@ void UHealthBarModule::PushHealthToMaterial(float HealthRatio)
 {
     LastHealthRatio = FMath::Clamp(HealthRatio, 0.f, 1.f);
 
-    if (!FillMID || !FillImage)
+    if (!FillMID)
     {
-        if (ShouldLog(DebugSettings ? DebugSettings->bLogModuleRefresh : false))
-            UE_LOG(LogTemp, Warning,
-                TEXT("[HealthBarModule] PushHealthToMaterial: FillMID or FillImage is null"));
+        // Only warn once to avoid log spam -- this is expected before BindToDataSource
+        UE_LOG(LogTemp, Verbose,
+            TEXT("[HealthBar] PushHealthToMaterial: FillMID is null (expected before Bind)"));
+        return;
+    }
+
+    if (!FillImage)
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("[HealthBar] PushHealthToMaterial: FillImage is null. "
+                "Widget 'FillImage' not found in Blueprint."));
         return;
     }
 
     // Select fill texture by health state
     UTexture2D* FillTex = SelectFillTexture(LastHealthRatio);
+
+    UE_LOG(LogTemp, Log,
+        TEXT("[HealthBar] PushHealthToMaterial: ratio=%.3f  tex=%s"),
+        LastHealthRatio,
+        FillTex ? *FillTex->GetName() : TEXT("NULL -- fill texture key missing in DA"));
+
     if (FillTex)
         FillMID->SetTextureParameterValue(TEXT("MainTexture"), FillTex);
+    else
+        UE_LOG(LogTemp, Warning,
+            TEXT("[HealthBar] No fill texture for ratio %.3f. "
+                "Check DA: FillGreen/FillYellow/FillRed keys in Textures map, "
+                "ThresholdYellow=%.2f, ThresholdRed=%.2f"),
+            LastHealthRatio,
+            Config.GetFloat(HUDConfigKeys::ThresholdYellow, 0.5f),
+            Config.GetFloat(HUDConfigKeys::ThresholdRed, 0.25f));
 
     // Compute and push clip ratio
     const float ClipRight = ComputeClipRatio(LastHealthRatio);
     FillMID->SetScalarParameterValue(TEXT("ClipRatioRight"), ClipRight);
 
-    if (ShouldLog(DebugSettings ? DebugSettings->bLogModuleRefresh : false))
+    if (ShouldLog(DebugSettings ? (DebugSettings->bLogModuleRefresh && DebugSettings->bLogHealthBar) : false))
         UE_LOG(LogTemp, Log,
-            TEXT("[HealthBarModule] PushHealthToMaterial: ratio=%.3f  clip=%.4f  tex='%s'"),
-            LastHealthRatio, ClipRight, FillTex ? *FillTex->GetName() : TEXT("null"));
+            TEXT("[HealthBar] ClipRatioRight=%.4f  (TexW=%.0f  OffL=%.0f  OffR=%.0f)"),
+            ClipRight,
+            Config.GetFloat(HUDConfigKeys::TextureWidth, 1078.f),
+            Config.GetFloat(HUDConfigKeys::OffsetLeft, 0.f),
+            Config.GetFloat(HUDConfigKeys::OffsetRight, 0.f));
 }
 
 // ---------------------------------------------------------------------------
@@ -183,12 +230,44 @@ UTexture2D* UHealthBarModule::SelectFillTexture(float HealthRatio) const
 // ---------------------------------------------------------------------------
 bool UHealthBarModule::CreateFillMID()
 {
+    // --- Diagnostic dump so you can see exactly what the config contains ---
+    if (ShouldLog(DebugSettings ? DebugSettings->bLogHealthBar : false))
+        UE_LOG(LogTemp, Log,
+            TEXT("[HealthBar] CreateFillMID for module '%s'"),
+            *Config.ModuleName.ToString());
+
+    if (ShouldLog(DebugSettings ? DebugSettings->bLogHealthBar : false))
+        UE_LOG(LogTemp, Log,
+            TEXT("[HealthBar]   FillImage widget pointer: %s"),
+            FillImage ? TEXT("OK") : TEXT("NULL"));
+
+    // Check all expected texture keys
+    const FName TexKeys[] = {
+        HUDConfigKeys::Background, HUDConfigKeys::FillGreen,
+        HUDConfigKeys::FillYellow, HUDConfigKeys::FillRed, HUDConfigKeys::Overlay
+    };
+    for (const FName& Key : TexKeys)
+    {
+        UTexture2D* T = Config.GetTexture(Key);
+        if (ShouldLog(DebugSettings ? DebugSettings->bLogHealthBar : false))
+            UE_LOG(LogTemp, Log, TEXT("[HealthBar]   Texture '%s': %s"),
+                *Key.ToString(), T ? *T->GetName() : TEXT("NULL"));
+    }
+
+    // Check material key
     UMaterialInterface* BaseMat = Config.GetMaterial(HUDConfigKeys::MatClip);
+    if (ShouldLog(DebugSettings ? DebugSettings->bLogHealthBar : false))
+        UE_LOG(LogTemp, Log, TEXT("[HealthBar]   Material 'MatClip': %s"),
+            BaseMat ? *BaseMat->GetName() : TEXT("NULL -- THIS IS WHY FillImage IS INVISIBLE"));
+
     if (!BaseMat)
     {
         UE_LOG(LogTemp, Warning,
-            TEXT("[HealthBarModule] CreateFillMID: no '%s' material in config for module '%s'"),
-            *HUDConfigKeys::MatClip.ToString(), *Config.ModuleName.ToString());
+            TEXT("[HealthBar] CreateFillMID FAILED: 'MatClip' material not found in "
+                "FHUDModuleConfig::Materials for module '%s'. "
+                "Open your DA, go to the HealthBar module entry, expand Materials, "
+                "add a key 'MatClip' and assign your M_HUD_Clip material asset."),
+            *Config.ModuleName.ToString());
         return false;
     }
 
@@ -196,23 +275,23 @@ bool UHealthBarModule::CreateFillMID()
     if (!FillMID)
     {
         UE_LOG(LogTemp, Error,
-            TEXT("[HealthBarModule] CreateFillMID: UMaterialInstanceDynamic::Create returned null"));
+            TEXT("[HealthBar] CreateFillMID: UMaterialInstanceDynamic::Create returned null"));
         return false;
     }
 
     if (FillImage)
     {
         FillImage->SetBrushFromMaterial(FillMID);
-
-        if (ShouldLog(DebugSettings ? DebugSettings->bLogModuleBinding : false))
-            UE_LOG(LogTemp, Log,
-                TEXT("[HealthBarModule] CreateFillMID: FillMID created and applied to FillImage"));
+        UE_LOG(LogTemp, Log,
+            TEXT("[HealthBar] CreateFillMID: FillMID created and applied to FillImage -- OK"));
     }
     else
     {
         UE_LOG(LogTemp, Warning,
-            TEXT("[HealthBarModule] CreateFillMID: FillImage is null. "
-                "Ensure your Blueprint has a UImage named 'FillImage'."));
+            TEXT("[HealthBar] CreateFillMID: FillMID created but FillImage is null. "
+                "In your BP_HealthBarModule, the UImage widget must be named exactly "
+                "'FillImage' (case-sensitive) for BindWidget to find it."));
+        return false;
     }
 
     return true;

@@ -188,6 +188,38 @@ bool UReplayRecorderComponent::LoadReplay()
     return true;
 }
 
+bool UReplayRecorderComponent::SaveFullMatchReplay(const FString& Label)
+{
+    if (!LiveReplay) return false;
+    const UReplaySettings* S = GetSettings();
+    if (!S) return false;
+
+    LiveReplay->Label = Label.IsEmpty()
+        ? FString::Printf(TEXT("FullMatch_%s"), *FDateTime::Now().ToString())
+        : Label;
+
+    LiveReplay->RecordEndTime = GetWorld()->GetTimeSeconds();
+
+    const bool bOk = UGameplayStatics::SaveGameToSlot(
+        LiveReplay, S->DeathReplaySaveSlot, S->SaveUserIndex);
+
+    if (S->bLogReplaySave)
+    {
+        UE_LOG(LogTemp, Log,
+            TEXT("[ReplayRecorder] SaveFullMatchReplay %s  slot='%s'  "
+                "duration=%.1fs  TickFrames=%d  Keyframes=%d  VFXEvents=%d  MatchEvents=%d"),
+            bOk ? TEXT("OK") : TEXT("FAILED"),
+            *S->DeathReplaySaveSlot,
+            LiveReplay->GetDuration(),
+            LiveReplay->TickFrames.Num(),
+            LiveReplay->Keyframes.Num(),
+            LiveReplay->VFXEvents.Num(),
+            LiveReplay->MatchEvents.Num());
+    }
+
+    return bOk;
+}
+
 // ---------------------------------------------------------------------------
 //  Extract slice
 // ---------------------------------------------------------------------------

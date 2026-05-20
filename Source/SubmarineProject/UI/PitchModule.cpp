@@ -3,6 +3,7 @@
 #include "PitchModule.h"
 #include "HUD/SubmarineHUDSettings.h"
 #include "HUD/SubmarineHUDDebugSettings.h"
+#include "Components/Image.h"
 
 // ---------------------------------------------------------------------------
 //  BindToDataSource
@@ -12,13 +13,13 @@ void UPitchModule::BindToDataSource()
     UObject* Obj = DataSource.GetObject();
     if (!IsValid(Obj))
     {
-        if (ShouldLog(DebugSettings ? DebugSettings->bLogModuleBinding : false))
+        if (ShouldLog(DebugSettings ? (DebugSettings->bLogModuleBinding && DebugSettings->bLogPitch) : false))
             UE_LOG(LogTemp, Warning,
                 TEXT("[PitchModule] BindToDataSource: invalid DataSource"));
         return;
     }
 
-    if (ShouldLog(DebugSettings ? DebugSettings->bLogModuleBinding : false))
+    if (ShouldLog(DebugSettings ? (DebugSettings->bLogModuleBinding && DebugSettings->bLogPitch) : false))
         UE_LOG(LogTemp, Log,
             TEXT("[PitchModule] BindToDataSource: '%s'"), *Obj->GetName());
 
@@ -33,7 +34,7 @@ void UPitchModule::UnbindFromDataSource()
 {
     UObject* Obj = DataSource.GetObject();
 
-    if (ShouldLog(DebugSettings ? DebugSettings->bLogModuleBinding : false))
+    if (ShouldLog(DebugSettings ? (DebugSettings->bLogModuleBinding && DebugSettings->bLogPitch) : false))
         UE_LOG(LogTemp, Log,
             TEXT("[PitchModule] UnbindFromDataSource: '%s'"),
             IsValid(Obj) ? *Obj->GetName() : TEXT("None"));
@@ -54,7 +55,7 @@ void UPitchModule::RefreshVisuals_Implementation()
 
     const float CurrentPitch = DataSource->GetCurrentPitch();
 
-    if (ShouldLog(DebugSettings ? DebugSettings->bLogModuleRefresh : false))
+    if (ShouldLog(DebugSettings ? (DebugSettings->bLogModuleRefresh && DebugSettings->bLogPitch) : false))
         UE_LOG(LogTemp, Log,
             TEXT("[PitchModule] RefreshVisuals: pitch=%.2f"), CurrentPitch);
 
@@ -95,9 +96,11 @@ void UPitchModule::ApplyPitch(float PitchDegrees)
     const float ClampedPitch = FMath::Clamp(PitchDegrees, -MaxAngle, MaxAngle);
 
     // Normalize: 0 = full down, 1 = full up
-    const float Alpha = (MaxAngle > 0.f)
+    const float InvertedAlpha = (MaxAngle > 0.f)
         ? (ClampedPitch + MaxAngle) / (2.f * MaxAngle)
         : 0.5f;
+
+    float Alpha = 1.f - InvertedAlpha;
 
     // Interpolate Y positions from pixel config
     const float MinCrankY = Config.GetFloat(TEXT("MinCrankY"), 0.f);
@@ -108,13 +111,23 @@ void UPitchModule::ApplyPitch(float PitchDegrees)
     const float CrankY = FMath::Lerp(MinCrankY, MaxCrankY, Alpha);
     const float MetalY = FMath::Lerp(MinMetalY, MaxMetalY, Alpha);
 
-    const bool bInvertCrank = Config.GetFloat(TEXT("InvertCrank"), 0.f) > 0.5f;
-    const bool bInvertMetal = Config.GetFloat(TEXT("InvertMetal"), 0.f) > 0.5f;
+    const bool bInvertCrank = false;
+    const bool bInvertMetal = false;
 
-    if (ShouldLog(DebugSettings ? DebugSettings->bLogModuleRefresh : false))
+    if (ShouldLog(DebugSettings ? (DebugSettings->bLogModuleRefresh && DebugSettings->bLogPitch) : false))
         UE_LOG(LogTemp, Verbose,
             TEXT("[PitchModule] ApplyPitch: pitch=%.2f  alpha=%.3f  CrankY=%.1f  MetalY=%.1f"),
             PitchDegrees, Alpha, CrankY, MetalY);
 
     UpdateElementPositions(CrankY, bInvertCrank, MetalY, bInvertMetal);
+
+    // Metal vertical flip: mirrors the texture when nose is pointing down.
+    // Controlled by "FlipMetalOnNegativePitch" float in DA (0=off, 1=on).
+    if (MetalImage)
+    {
+        const bool bShouldFlip = PitchDegrees < 0.f;
+        MetalImage->SetRenderScale(bShouldFlip
+            ? FVector2D(1.f, -1.f)
+            : FVector2D(1.f, 1.f));
+    }
 }

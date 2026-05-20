@@ -7,6 +7,9 @@
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
 #include "Blueprint/WidgetTree.h"
+#include "GameFramework/PlayerController.h"
+#include "Engine/LocalPlayer.h"
+#include "Engine/GameViewportClient.h"
 
 // ---------------------------------------------------------------------------
 //  InitializeHUD
@@ -36,7 +39,7 @@ void UMainHUDWidget::InitializeHUD(USubmarineHUDSettings* Settings)
 
     CachedSettings = Settings;
 
-    if (ShouldLog(DebugSettings->bLogHUDInitialization))
+    if (ShouldLog(DebugSettings ? DebugSettings->bLogHUDInitialization : false))
         UE_LOG(LogTemp, Log,
             TEXT("[MainHUDWidget] InitializeHUD: %d module entries in DataAsset"),
             Settings->Modules.Num());
@@ -49,7 +52,7 @@ void UMainHUDWidget::InitializeHUD(USubmarineHUDSettings* Settings)
     {
         if (!ModuleConfig.bEnabled)
         {
-            if (ShouldLog(DebugSettings->bLogModuleCreation))
+            if (ShouldLog(DebugSettings ? DebugSettings->bLogModuleCreation : false))
                 UE_LOG(LogTemp, Log,
                     TEXT("[MainHUDWidget]   SKIP (disabled): '%s'"),
                     *ModuleConfig.ModuleName.ToString());
@@ -69,7 +72,7 @@ void UMainHUDWidget::InitializeHUD(USubmarineHUDSettings* Settings)
         ++CreatedCount;
     }
 
-    if (ShouldLog(DebugSettings->bLogHUDInitialization))
+    if (ShouldLog(DebugSettings ? DebugSettings->bLogHUDInitialization : false))
         UE_LOG(LogTemp, Log,
             TEXT("[MainHUDWidget] InitializeHUD complete: Created=%d  Skipped=%d  Failed=%d"),
             CreatedCount, SkippedCount, FailedCount);
@@ -77,7 +80,7 @@ void UMainHUDWidget::InitializeHUD(USubmarineHUDSettings* Settings)
     // Reapply cached data source if one was set before re-init
     if (CachedDataSource.GetObject())
     {
-        if (ShouldLog(DebugSettings->bLogDataSourcePropagation))
+        if (ShouldLog(DebugSettings ? DebugSettings->bLogDataSourcePropagation : false))
             UE_LOG(LogTemp, Log,
                 TEXT("[MainHUDWidget] Re-applying cached DataSource '%s' to %d new modules"),
                 *CachedDataSource.GetObject()->GetName(), ActiveModules.Num());
@@ -174,7 +177,9 @@ UBaseHUDModule* UMainHUDWidget::CreateAndAddModule(const FHUDModuleConfig& Modul
         return nullptr;
     }
 
-    ApplyLayoutToSlot(CanvasSlot, ModuleConfig);
+    const FVector2D DesRes = CachedSettings
+        ? CachedSettings->DesignResolution : FVector2D(1920.f, 1080.f);
+    ApplyLayoutToSlot(CanvasSlot, ModuleConfig, GetOwningPlayer(), DebugSettings, DesRes);
 
     // SetConfig triggers RefreshVisuals with no data source yet (safe)
     Module->SetConfig(ModuleConfig);
@@ -191,18 +196,105 @@ UBaseHUDModule* UMainHUDWidget::CreateAndAddModule(const FHUDModuleConfig& Modul
 //  ApplyLayoutToSlot
 // ---------------------------------------------------------------------------
 void UMainHUDWidget::ApplyLayoutToSlot(UCanvasPanelSlot* CanvasSlot,
-    const FHUDModuleConfig& Config)
+    const FHUDModuleConfig& Config, APlayerController* OwningPlayer, USubmarineHUDDebugSettings* InDebugSettings,FVector2D InDesignResolution)
 {
     if (!CanvasSlot) return;
 
-    CanvasSlot->SetAnchors(Config.Anchors);
+    /*CanvasSlot->SetAnchors(Config.Anchors);
     CanvasSlot->SetAlignment(Config.Pivot);
     CanvasSlot->SetPosition(Config.PositionOffset);
 
     const bool bAutoSize = Config.SizeOverride.IsNearlyZero();
     CanvasSlot->SetAutoSize(bAutoSize);
     if (!bAutoSize)
-        CanvasSlot->SetSize(Config.SizeOverride);
+        CanvasSlot->SetSize(Config.SizeOverride);*/
+
+    CanvasSlot->SetAnchors(Config.Anchors);
+    CanvasSlot->SetAlignment(Config.Pivot);
+
+    const bool bIsStretch = !Config.Anchors.Minimum.Equals(Config.Anchors.Maximum, KINDA_SMALL_NUMBER);
+    if (!bIsStretch)
+    {
+        // ---- POINT ANCHOR MODE ----
+        //
+        // Key insight: we manually resolve the 0..1 anchor to absolute pixels
+        // against the KNOWN HUD design resolution (1920x1080), then lock the
+        // canvas slot anchors to (0,0,0,0) and use SetPosition with those
+        // absolute pixels.
+        //
+        // This is the fix for the bug you observed:
+        // When UMG resolves anchor points it uses the PARENT canvas size.
+        // If the canvas slot's anchors are non-zero, UMG multiplies by the
+        // parent's ALLOCATED size for that widget -- which may be the widget's
+        // own desired/intrinsic size (from the BP canvas), not 1920x1080.
+        // By doing the math ourselves and passing absolute pixels with a
+        // (0,0,0,0) anchor, we remove that ambiguity entirely.
+
+        // Design resolution: positions are authored against HUDSize pixels.
+        // Read from the DA (CachedSettings->DesignResolution) so it's configurable
+        // without recompiling. Default is 1920x1080.
+        //
+        // UMG scales this canvas to fit each player's actual viewport automatically
+        // via AddToPlayerScreen. In split-screen, UMG handles the half-viewport.
+        // In PIE the viewport is your editor window size -- positions scale accordingly.
+        const FVector2D HUDSize = InDesignResolution.IsNearlyZero()
+            ? FVector2D(1920.f, 1080.f) : InDesignResolution;
+
+
+        // Anchor expressed as absolute screen pixels
+        const FVector2D AnchorPx = Config.Anchors.Minimum * HUDSize;
+
+        // Final position = resolved anchor + manual pixel nudge
+        const FVector2D FinalPos = AnchorPx + Config.PositionOffset;
+
+        FVector2D FinalSize = Config.SizeOverride;
+        if (FinalSize.IsNearlyZero())
+        {
+            UE_LOG(LogTemp, Warning,
+                TEXT("[MainHUDWidget] Layout '%s': SizeOverride is (0,0). "
+                    "Set SizeOverride to your texture's pixel size (e.g. 1078,64). "
+                    "Using fallback (100,100)."),
+                *Config.ModuleName.ToString());
+            FinalSize = FVector2D(100.f, 100.f);
+        }
+
+        // Lock anchors to top-left origin -- all positioning is via SetPosition
+        CanvasSlot->SetAnchors(FAnchors(0.f, 0.f, 0.f, 0.f));
+        CanvasSlot->SetAlignment(Config.Pivot);
+        CanvasSlot->SetAutoSize(false);
+        CanvasSlot->SetPosition(FinalPos);
+        CanvasSlot->SetSize(FinalSize);
+    }
+    else
+    {
+        // ---- STRETCH ANCHOR MODE ----
+        // Let UMG handle anchor-relative sizing. Use FMargin offsets.
+        FMargin Offsets;
+        Offsets.Left = Config.PositionOffset.X;
+        Offsets.Top = Config.PositionOffset.Y;
+        Offsets.Right = Config.SizeOverride.X;
+        Offsets.Bottom = Config.SizeOverride.Y;
+
+        CanvasSlot->SetAnchors(Config.Anchors);
+        CanvasSlot->SetAlignment(Config.Pivot);
+        CanvasSlot->SetOffsets(Offsets);
+    }
+
+    // Apply ZOrder so HUD modules render above billboard widgets
+    CanvasSlot->SetZOrder(Config.ZOrder);
+
+    // Log to verify exact pixel positions at startup
+    if (IsValid(InDebugSettings) && InDebugSettings->bLogModuleLayout)
+        UE_LOG(LogTemp, Log,
+            TEXT("[MainHUDWidget] Layout '%s'  Mode=%s  "
+                "NormAnchor=(%.3f,%.3f)  Pivot=(%.2f,%.2f)  "
+                "FinalPos=(%.1f,%.1f)  Size=(%.1f,%.1f)"),
+            *Config.ModuleName.ToString(),
+            bIsStretch ? TEXT("STRETCH") : TEXT("POINT"),
+            Config.Anchors.Minimum.X, Config.Anchors.Minimum.Y,
+            Config.Pivot.X, Config.Pivot.Y,
+            CanvasSlot->GetPosition().X, CanvasSlot->GetPosition().Y,
+            CanvasSlot->GetSize().X, CanvasSlot->GetSize().Y);
 }
 
 // ---------------------------------------------------------------------------

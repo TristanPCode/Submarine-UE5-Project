@@ -11,35 +11,71 @@ class UCanvasPanelSlot;
 /**
  * UPositionalIndicatorModule
  *
- * Shared base class for UEngineStateModule and UPitchModule.
+ * Shared base for UEngineStateModule and UPitchModule.
  *
- * Manages three stacked image layers on a UCanvasPanel:
- *   1. Background  -- static plate, pinned full-size
- *   2. Crank       -- repositioned vertically by subclass
- *   3. Metal       -- repositioned vertically by subclass
+ * Three image layers on a UCanvasPanel:
+ *   1. BackgroundImage  -- static, fills the whole canvas (anchor 0,0->1,1)
+ *   2. CrankImage       -- moved as a rigid block by subclass logic
+ *   3. MetalImage       -- moved as a rigid block by subclass logic
  *
- * Positioning is pixel-authored and converted to ratios at runtime:
- *   FinalRatio = PixelOffset / TextureHeight
- *   if bInvert: FinalRatio = 1.0 - FinalRatio
- *   FinalPosition = FinalRatio * RenderedHeight
+ * -----------------------------------------------------------------------
+ *  BLUEPRINT SETUP
+ * -----------------------------------------------------------------------
+ *  Root widget: LayerCanvas (UCanvasPanel)
+ *    BackgroundImage  -- anchor Min(0,0) Max(1,1), offsets 0   <- fills panel
+ *    CrankImage       -- any anchor/size, overwritten at runtime
+ *    MetalImage       -- any anchor/size, overwritten at runtime
  *
- * UMG layout timing:
- *   Widget rendered size is not available at construction time.
- *   Positions are applied in NativeOnInitialized() after the first layout pass,
- *   and also whenever UpdateElementPositions() is called by subclasses.
- *   Subclasses call UpdateElementPositions() from their update path
- *   (event handler or NativeTick).
+ * -----------------------------------------------------------------------
+ *  DA CONFIG KEYS
+ * -----------------------------------------------------------------------
+ *  Textures:
+ *    Background    -- static backdrop
+ *    Crank         -- moving crank element
+ *    Metal         -- moving metal element
  *
- * Config keys:
- *   Textures: Background, Crank, Metal
- *   Floats:   TextureHeight, CrankOffsetX
- *   StateEntries: TArray<FEngineStateEntry> (populated by subclasses' configs)
+ *  Floats (background plate dimensions -- coordinate reference for all positions):
+ *    TextureWidth   -- authored pixel width  of the background texture
+ *    TextureHeight  -- authored pixel height of the background texture
  *
- * Blueprint setup:
- *   Create a Blueprint subclass.
- *   Add a UCanvasPanel named "LayerCanvas" as root.
- *   Inside it: BackgroundImage, CrankImage, MetalImage.
- *   Set BackgroundImage slot to fill the panel (anchors 0,0 to 1,1).
+ *  Floats (each element's OWN texture pixel dimensions):
+ *    CrankWidth, CrankHeight   -- pixel size of the Crank texture
+ *    MetalWidth, MetalHeight   -- pixel size of the Metal texture
+ *
+ *  Floats (horizontal center positions, in background-plate pixel space):
+ *    CrankOffsetX   -- X center of crank measured from left of background plate
+ *    MetalOffsetX   -- X center of metal measured from left (default = CrankOffsetX)
+ *
+ *  For EngineStateModule:
+ *    StateEntries[] -- 7 FEngineStateEntry, indexed by (int32)ELinearSpeedState:
+ *      0=BackwardMAX, 1=BackwardMED, 2=BackwardMIN, 3=Stand,
+ *      4=ForwardMIN,  5=ForwardMED,  6=ForwardMAX
+ *
+ *  For PitchModule:
+ *    MinCrankY, MaxCrankY  -- crank Y at full-down / full-up pitch (texture pixels)
+ *    MinMetalY, MaxMetalY  -- metal Y at full-down / full-up pitch (texture pixels)
+ *    MaxPitchAngle         -- degrees, e.g. 30.0
+ *    InvertPitch           -- 1.0 to flip crank direction if it moves wrong way
+ *    FlipMetalOnNegativePitch -- 1.0 to mirror metal texture when nose is down
+ *
+ * -----------------------------------------------------------------------
+ *  COORDINATE SYSTEM
+ * -----------------------------------------------------------------------
+ *  All authored Y values are in background-plate PIXEL SPACE (0=top).
+ *  Converted at runtime: ScreenY = (PixelY / TextureHeight) * CanvasHeight
+ *  bInvert=true: ScreenY = (1 - PixelY/TextureHeight) * CanvasHeight
+ *
+ *  X positions use TextureWidth as the reference. Alignment (0.5, 0.0)
+ *  means the authored X is the HORIZONTAL CENTER of the element,
+ *  and Y is the TOP EDGE.
+ *
+ * -----------------------------------------------------------------------
+ *  IMPORTANT -- CONFIG TIMING
+ * -----------------------------------------------------------------------
+ *  NativeOnInitialized fires BEFORE SetConfig. Therefore InitMovingImageSlot
+ *  (which reads CrankWidth etc.) must NOT be called in NativeOnInitialized.
+ *  It is called in RefreshVisuals_Implementation, which fires after SetConfig.
+ *  A guard flag (bSlotsInitialized) ensures it only re-runs when config changes.
  */
 UCLASS(Abstract, Blueprintable, BlueprintType)
 class SUBMARINEPROJECT_API UPositionalIndicatorModule : public UBaseHUDModule
@@ -125,8 +161,15 @@ private:
     void ApplyPositionsIfReady();
 
     /**
-     * Set widget slot position in absolute canvas pixels.
-     * Returns false if the widget has no canvas slot.
+     * Force a UImage slot into point-anchor + fixed-size mode.
+     * Called from RefreshVisuals (after SetConfig), NOT from NativeOnInitialized.
+     * Alignment (0.5, 0.0): authored X = horizontal center, Y = top edge.
      */
-    static bool SetCanvasSlotPosition(UWidget* Widget, FVector2D Position);
+    void InitMovingImageSlots();
+
+    /**
+     * Move a UImage that has been set up by InitMovingImageSlot.
+     * Uses SetPosition which only works correctly in point-anchor mode.
+     */
+    static bool SetMovingImagePosition(UImage* Image, FVector2D Position);
 };

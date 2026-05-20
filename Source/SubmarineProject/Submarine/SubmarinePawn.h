@@ -4,6 +4,7 @@
 #include "GameFramework/Pawn.h"
 #include "SubmarineCharacteristics.h"
 #include "SubmarineTorpedoComponent.h"
+#include "RadarComponent.h"
 #include "TrackableSubmarine.h"
 #include "SubmarinePawn.generated.h"
 
@@ -49,6 +50,10 @@ public:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Submarine|State")
     bool bDead = false;
 
+    // Set by the Controller, allows different sensibility settings
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Submarine|State")
+    bool bUsesGamepad = false;
+
     /**
      * Called by the GameMode immediately when this submarine dies.
      * - Hides the actor from ALL players (SetActorHiddenInGame).
@@ -81,6 +86,10 @@ public:
     /** Applies a new characteristics asset at runtime */
     UFUNCTION(BlueprintCallable, Category = "Submarine|Stats")
     void LoadCharacteristics(USubmarineCharacteristics* NewCharacteristics);
+
+    /** Set by SpawnManager after spawn. Read by ITrackableSubmarine. */
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Submarine|Stats")
+    int32 SubmarineLevel = 1;
 
     // -- Enhanced Input ----------------------------------------------------
 
@@ -120,6 +129,10 @@ public:
 
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Submarine|Input")
     TObjectPtr<UInputAction> IA_Camera3rdPerson; // Digital
+
+    /** Input action for triggering a radar scan. Assign in Blueprint. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Submarine|Input")
+    TObjectPtr<UInputAction> IA_RadarScan;   // Digital press
 
     // -- Input Pending (when both directions hold) -------------------------
 
@@ -164,6 +177,9 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Submarine|Camera")
     void ActivateCamera(ESubmarineCameraState NewState);
 
+    UFUNCTION(BlueprintCallable, Category = "Camera")
+    void ApplyCameraFOV(float FOV);
+
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Submarine|Camera")
     TObjectPtr<UCameraBlendSettings> CameraBlendSettings;
 
@@ -188,6 +204,7 @@ public:
 
     USubmarineCollisionComponent* GetCollisionHandler() const { return CollisionHandler; }
     USubmarineTorpedoComponent* GetTorpedoHandler() const { return TorpedoHandler; }
+    URadarComponent* GetRadarHandler() const { return RadarHandler; }
 
 
     // -------------------------------------------------------------------
@@ -200,21 +217,33 @@ public:
     virtual int32              GetVerticalStateIndex()   const override;
     virtual int32              GetVerticalStateCount()   const override;
     virtual ELinearSpeedState  GetLinearSpeedState()     const override;
+    virtual float              GetCurrentYaw()           const override;
+    virtual bool               GetIsPeriscopeActive()    const override;
+    virtual float              GetCurrentZoom()          const override;
+    virtual float              GetCameraFOV()            const override;
+    virtual FVector            GetCameraForwardVector()  const override;
+    virtual float              GetVulnerabilityScore()   const override;
     virtual int32              GetNormalAmmoCount()      const override;
     virtual int32              GetNormalAmmoCapacity()   const override;
     virtual int32              GetSpecialAmmoCount()     const override;
     virtual int32              GetSpecialAmmoCapacity()  const override;
+    virtual ETorpedoType       GetSpecialTorpedoType()   const override;
     virtual float              GetFireCooldownRatio()    const override;
     virtual float              GetReloadRatio()          const override;
     virtual bool               GetIsReloading()          const override;
     virtual FText              GetDisplayName()          const override;
+    virtual int32              GetLevel()                const override;
     virtual const TArray<FDetectedEntry>& GetDetectionEntries() const override;
-    virtual FOnSubmarineDamaged&     GetOnDamagedDelegate()      override;
-    virtual FOnAmmoChanged&          GetOnAmmoChangedDelegate()   override;
-    virtual FOnTorpedoFired&         GetOnTorpedoFiredDelegate()  override;
-    virtual FOnReadyToFire&          GetOnReadyToFireDelegate()   override;
-    virtual FOnFireCooldownComplete& GetOnFireCooldownDelegate()  override;
-    virtual FOnLinearStateChanged& GetOnLinearStateChangedDelegate() override;
+    virtual float              GetScanCooldownRatio()    const override;
+
+    virtual FOnSubmarineDamaged&     GetOnDamagedDelegate()            override;
+    virtual FOnAmmoChanged&          GetOnAmmoChangedDelegate()        override;
+    virtual FOnTorpedoFired&         GetOnTorpedoFiredDelegate()       override;
+    virtual FOnReadyToFire&          GetOnReadyToFireDelegate()        override;
+    virtual FOnFireCooldownComplete& GetOnFireCooldownDelegate()       override;
+    virtual FOnLinearStateChanged&   GetOnLinearStateChangedDelegate() override;
+    virtual void                     NotifyRadarUsed()                 override;
+    virtual void                     NotifyTorpedoFired()              override;
 
 private:
     // -- Components --------------------------------------------------------
@@ -230,6 +259,10 @@ private:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components",
         meta = (AllowPrivateAccess = "true"))
     TObjectPtr<UCameraComponent> PeriscopeCamera;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components",
+        meta = (AllowPrivateAccess = "true"))
+    TObjectPtr<URadarComponent> RadarHandler;
 
     /**
      * 3rd person camera — NOT attached to submarine root so it doesn't
@@ -282,6 +315,11 @@ private:
 
     void IncrementLinearState(int32 Direction); // Direction: +1 forward, -1 backward
 
+    /** Per-pawn linear state delegate -- NOT shared with other submarines.
+     *  GetOnLinearStateChangedDelegate() returns this instead of the DA-level
+     *  delegate, ensuring each submarine notifies only its own HUD module. */
+    FOnLinearStateChanged PerPawnLinearStateChanged;
+
     // -- Vertical angle internals ------------------------------------------
 
     float VerticalAxisValue = 0.f;
@@ -325,6 +363,10 @@ private:
     float ExternalVerticalVelocity = 0.f;
     float ExternalYawVelocity = 0.f;
     float ExternalPitchVelocity = 0.f;
+
+    // -- Radar Scan System -------------------------------------------------
+
+    void OnRadarScan(const FInputActionValue& Value);
 
     // -- Camera state ------------------------------------------------------
 
@@ -387,6 +429,8 @@ private:
     void OnCamera3rdPersonStarted(const FInputActionValue& Value); 
     void OnCamera3rdPersonTriggered(const FInputActionValue& Value);
     void OnCamera3rdPersonCompleted(const FInputActionValue& Value);
+
+    void OnTorpedoFiredForVulnerability(ETorpedoType TorpedoType, ATorpedoPawn* TorpedoActor);
 
     // -- Helpers -----------------------------------------------------------
 

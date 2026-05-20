@@ -642,6 +642,10 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera|Periscope")
     float PeriscopeYawSensitivity = 1.f;
 
+    /** Periscope yaw sensitivity for gamepad right-stick (degrees/unit). */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera|Periscope")
+    float PeriscopeYawSensitivity_Gamepad = 2.f;
+
     // -- Camera (3rd Person) ----------------------
 
     /** Local offset of the 3rd person camera pivot relative to submarine root */
@@ -665,13 +669,25 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera|ThirdPerson")
     float ThirdPersonScrollSpeed = 200.f;
 
+    /** Scroll zoom speed for gamepad DPAD hold (radius change continously). */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera|ThirdPerson")
+    float ThirdPersonScrollSpeed_Gamepad = 40.f;
+
     /** Mouse X sensitivity for orbiting (degrees/unit) */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera|ThirdPerson")
     float ThirdPersonYawSensitivity = 1.f;
 
+    /** Orbit yaw sensitivity for gamepad right-stick (degrees/unit). */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera|ThirdPerson")
+    float ThirdPersonYawSensitivity_Gamepad = 2.f;
+
     /** Mouse Y sensitivity for orbiting (degrees/unit) */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera|ThirdPerson")
     float ThirdPersonPitchSensitivity = 1.f;
+
+    /** Orbit pitch sensitivity for gamepad right-stick (degrees/unit). */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera|ThirdPerson")
+    float ThirdPersonPitchSensitivity_Gamepad = 2.f;
 
     /** Initial horizontal orbit angle in degrees */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera|ThirdPerson")

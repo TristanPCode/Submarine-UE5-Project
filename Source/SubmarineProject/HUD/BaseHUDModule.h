@@ -7,6 +7,7 @@
 #include "BaseHUDModule.generated.h"
 
 class USubmarineHUDDebugSettings;
+class UCanvasPanel;
 
 /**
  * UBaseHUDModule
@@ -125,6 +126,48 @@ protected:
 
     UPROPERTY(BlueprintReadOnly, Category = "HUDModule")
     FHUDModuleConfig Config;
+
+    // -----------------------------------------------------------------------
+    //  Composite module support
+    // -----------------------------------------------------------------------
+
+    /**
+     * Registry of child modules owned by this module.
+     * Populated by CreateChildModule(). Automatically cleaned up in NativeDestruct.
+     */
+    UPROPERTY()
+    TArray<TObjectPtr<UBaseHUDModule>> ChildModules;
+
+    /**
+     * Create a child module, add it to TargetCanvas, and register it in ChildModules.
+     *
+     * @param ModuleClass       Class to instantiate (must be a UBaseHUDModule subclass)
+     * @param TargetCanvas      Canvas to attach the child to
+     * @param NormalizedPos     Position as a 0..1 fraction of CanvasSize
+     * @param NormalizedSize    Size as a 0..1 fraction of CanvasSize
+     * @param CanvasSize        Current rendered size of TargetCanvas (pixels)
+     * @param ChildConfig       Config to pass to the child via SetConfig()
+     * @return                  The created module, or nullptr on failure
+     *
+     * DebugSettings is automatically forwarded to the child.
+     * SetConfig() is called before returning so the child is ready.
+     * SetDataSource() must be called separately (via PropagateDataSourceToChildren).
+     */
+    UBaseHUDModule* CreateChildModule(
+        TSubclassOf<UBaseHUDModule> ModuleClass,
+        UCanvasPanel* TargetCanvas,
+        FVector2D NormalizedPos,
+        FVector2D NormalizedSize,
+        FVector2D CanvasSize,
+        const FHUDModuleConfig& ChildConfig);
+
+    /**
+     * Forward the current DataSource (or a new one) to all registered children.
+     * Call this at the end of BindToDataSource() and at the start of
+     * UnbindFromDataSource() (with the existing DataSource still set).
+     */
+    void PropagateDataSourceToChildren(
+        const TScriptInterface<ITrackableSubmarine>& Source);
 
     // -----------------------------------------------------------------------
     //  Log helpers for subclasses

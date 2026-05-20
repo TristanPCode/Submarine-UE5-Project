@@ -8,35 +8,66 @@
 class UImage;
 class UCanvasPanel;
 
-/** Maximum number of digits rendered (XXX.X format = 4 digits). */
-static constexpr int32 MaxDigitCount = 4;
-
 /**
  * UNumericDisplayModule
  *
  * Tick-driven numeric display using a digit atlas texture.
  * Renders up to 4 digits (XXX.X format) by selecting UV regions from
  * a shared atlas texture. The decimal dot is baked into the background.
+ * 
+ * Digit count is driven by Config.GetFloat("DigitCount") cast to int.
+ * Digit images are created dynamically in NativeOnInitialized — no
+ * hardcoded BindWidget slots.
  *
- * Atlas layout:
- *   3 rows (color variants), 10 columns (digits 0-9)
+ * Atlas layout (3 rows × 10 digits):
  *   Row 0 = Speed (green), Row 1 = Depth (blue), Row 2 = Ammo (orange)
- *   Each digit cell: AtlasDigitWidth x AtlasDigitHeight pixels
+ *   Each digit cell: 82 × 167 px
+ *   First digit in atlas: offset (1px from left, 2px from top)
+ *   Horizontal spacing between digits in atlas: 2px
+ *   Vertical spacing between rows in atlas: 3px
  *
- * All digit UImage widgets share ONE atlas texture via separate MID instances
- * of M_HUD_AtlasSample. Only UV parameters are updated per tick.
+ * Display layout (authored in original texture space, scaled at runtime):
  *
- * Tick optimization: digits are only pushed to material when the digit value
- * changes. Steady-state (no movement) costs only 4 integer comparisons.
+ *   Speed / Depth (XXX.X format, 4 digits):
+ *     Background: 524 × 364 px
+ *     First digit offset: (142, 33)
+ *     Digit spacing: 33px
+ *     Dot spacing (each side): 63px
+ *     DecimalIndex = 3 (dot between digit 2 and digit 3)
  *
- * Config keys:
- *   Textures:  Background, DigitAtlas
- *   Floats:    AtlasDigitWidth, AtlasDigitHeight,
- *              AtlasTotalWidth, AtlasTotalHeight,
- *              AtlasRowIndex (0/1/2),
- *              DigitSpacing, DigitOffsetX, DigitOffsetY,
- *              MaxValue, DecimalPlaces
- *   Materials: MatAtlasSample  (base material for atlas sampling)
+ *   Ammo (XX format, 2 digits):
+ *     Background: 227 × 227 px
+ *     First digit offset: (28, 20)
+ *     Digit spacing: 23px
+ *     DecimalIndex = -1 (no decimal)
+ *
+ * Config keys (FHUDModuleConfig):
+ *   Textures:  Background, DigitAtlas, DecimalDot (optional image)
+ *   Floats:
+ *     DigitCount        -- total number of digit slots (2, 3, 4…)
+ *     DecimalIndex      -- position of decimal dot (-1 = none)
+ *                          dot placed between digit[DecimalIndex-1] and digit[DecimalIndex]
+ *     AtlasDigitWidth   -- 82
+ *     AtlasDigitHeight  -- 167
+ *     AtlasTotalWidth   -- 842
+ *     AtlasTotalHeight  -- 510
+ *     AtlasRowIndex     -- 0/1/2 selects row
+ *     AtlasFirstOffsetX -- 1  (left offset of first digit in atlas, px)
+ *     AtlasFirstOffsetY -- 2  (top offset of first digit in atlas, px)
+ *     AtlasHSpacing     -- 2  (horizontal gap between digits in atlas, px)
+ *     AtlasVSpacing     -- 3  (vertical gap between rows in atlas, px)
+ *     DigitOffsetX      -- first digit X offset from module origin (original px)
+ *     DigitOffsetY      -- first digit Y offset from module origin (original px)
+ *     DigitSpacing      -- spacing between digit centers (original px)
+ *     DotSpacingLeft    -- extra gap left of dot (original px, 0 if no dot)
+ *     DotSpacingRight   -- extra gap right of dot (original px, 0 if no dot)
+ *     MaxValue          -- clamp for display value
+ *   Materials: MatAtlasSample
+ *
+ * Performance note:
+ *   MIDs are created once per bind. Each tick only pushes UV parameters
+ *   for digits whose value has changed (LastDigits comparison). When value
+ *   is static, tick cost = N integer comparisons where N = DigitCount.
  *
  * Material parameters updated per digit:
  *   UMin, UMax  (float, 0..1 -- horizontal UV region for this digit)
@@ -64,19 +95,6 @@ protected:
 
     UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
     TObjectPtr<UImage> BackgroundImage;
-
-    /** Four digit image slots. Digit0 = leftmost (hundreds), Digit3 = tenths. */
-    UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
-    TObjectPtr<UImage> Digit0Image;
-
-    UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
-    TObjectPtr<UImage> Digit1Image;
-
-    UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
-    TObjectPtr<UImage> Digit2Image;
-
-    UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
-    TObjectPtr<UImage> Digit3Image;
 
     // -----------------------------------------------------------------------
     //  UBaseHUDModule overrides
@@ -106,61 +124,74 @@ protected:
 private:
 
     // -----------------------------------------------------------------------
-    //  Internal state
+    //  Dynamically created digit images
+    // -----------------------------------------------------------------------
+
+    /** One UImage per digit slot, created in NativeOnInitialized. */
+    UPROPERTY()
+    TArray<TObjectPtr<UImage>> DigitImages;
+
+    // -----------------------------------------------------------------------
+    //  MID state
     // -----------------------------------------------------------------------
 
     /** One MID per digit slot. All reference the same atlas texture. */
     UPROPERTY()
-    TObjectPtr<UMaterialInstanceDynamic> DigitMIDs[MaxDigitCount];
+    TArray<TObjectPtr<UMaterialInstanceDynamic>> DigitMIDs;
 
-    /** Last rendered digit values -- used to skip redundant material pushes. */
-    int32 LastDigits[MaxDigitCount] = { -1, -1, -1, -1 };
-
-    /** Cached pointer to the digit images for indexed access in tick. */
-    UImage* DigitImages[MaxDigitCount] = { nullptr };
+    /** Last rendered digit values. -1 = force refresh on next tick. */
+    TArray<int32> LastDigits;
 
     /** Cached atlas UV constants computed once at BindToDataSource. */
     float CachedVMin = 0.f;
     float CachedVMax = 0.f;
     float CachedUStep = 0.f;  // width of one digit in UV space (1/10)
+    float CachedUDigitWidth = 0.f; // pure digit width in UV (DigitW/TotalW, no spacing)
+    float CachedUFirstOffset = 0.f; // UV offset for the first pixel of digit 0
 
     bool bMIDsReady = false;
+    bool bWidgetsCreated = false;
+    bool bWidgetsPositioned = false;
 
     // -----------------------------------------------------------------------
     //  Internal helpers
     // -----------------------------------------------------------------------
 
     /**
-     * Create MID instances for all four digit slots from MatAtlasSample.
-     * Called once per data source bind. Returns false on failure.
+     * Dynamically create DigitImages (and optional DecimalDotImage) as
+     * children of DigitCanvas. Called once from NativeOnInitialized.
      */
-    bool CreateDigitMIDs();
+    void CreateDigitWidgets();
 
     /**
-     * Position digit images in DigitCanvas based on config offsets.
-     * Safe to call before layout -- deferred to NativeOnInitialized if needed.
+     * Position digit images and decimal dot on DigitCanvas using config
+     * pixel offsets scaled to current canvas size.
+     * Safe to call before layout — deferred if canvas size is zero.
      */
     void PositionDigitImages();
 
-    /**
-     * Decompose a float value into 4 display digits: [d0, d1, d2, d3]
-     * where d0 is hundreds, d1 is tens, d2 is units, d3 is tenths.
-     * Value is clamped to [0, MaxValue] before decomposition.
-     */
-    void DecomposeValue(float Value, int32 OutDigits[MaxDigitCount]) const;
+    /** Create MID instances from MatAtlasSample. Called in BindToDataSource. */
+    bool CreateDigitMIDs();
 
     /**
-     * Push UV parameters for digit at SlotIndex to its MID.
-     * @param SlotIndex  0..3
-     * @param DigitValue 0..9
+     * Decompose a float value into individual digit values.
+     * @param Value         Value to decompose (clamped to [0, MaxValue])
+     * @param OutDigits     Output array, size = DigitCount
+     * @param DecimalIndex  Where the decimal point sits (-1 = none)
      */
+    void DecomposeValue(float Value,
+        TArray<int32>& OutDigits,
+        int32          DecimalIndex) const;
+
+    /** Push UV parameters for one digit slot. */
     void PushDigitToMaterial(int32 SlotIndex, int32 DigitValue);
 
-    /**
-     * Update all four digit MIDs from the current display value.
-     * Skips slots where the digit hasn't changed (LastDigits comparison).
-     */
+    /** Update all digit MIDs from the current display value. */
     void UpdateAllDigits(float Value);
 
-    bool bDigitImagesPositioned = false;
+    /** Return the configured digit count (from Config Floats["DigitCount"]). */
+    int32 GetDigitCount() const;
+
+    /** Return the configured decimal index (from Config Floats["DecimalIndex"]). */
+    int32 GetDecimalIndex() const;
 };

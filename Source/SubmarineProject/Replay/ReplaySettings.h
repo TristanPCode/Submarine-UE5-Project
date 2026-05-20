@@ -22,6 +22,10 @@ struct FScreenFadeSettings
         meta = (ClampMin = "0.0", EditCondition = "bFadeIn"))
     float FadeInDuration = 0.5f;
 
+    /** Enable a HUD fade-in from black instead of managing opacity */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fade")
+    bool bFadeInHUDDarkness = true;
+
     /** Enable a fade-to-black before this phase ends / transitions out. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fade")
     bool bFadeOut = true;
@@ -30,6 +34,10 @@ struct FScreenFadeSettings
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fade",
         meta = (ClampMin = "0.0", EditCondition = "bFadeOut"))
     float FadeOutDuration = 0.5f;
+
+    /** Enable a HUD fade-to-black instead of managing opacity */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fade")
+    bool bFadeOutHUDDarkness = true;
 
     /** Colour to fade to/from (default black). */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fade")
@@ -235,6 +243,30 @@ public:
      */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Replay|Storage")
     bool bAutoSaveOnStop = false;
+
+    // -----------------------------------------------------------------------
+    //  Save / Load logging
+    // -----------------------------------------------------------------------
+
+    /** Log save/load operations with detailed size and slot information. */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Replay|Debug")
+    bool bLogReplaySave = true;
+
+    /**
+     * If true, automatically save the full match replay when the local player
+     * dies. This saves the ENTIRE LiveReplay buffer, not just the death slice.
+     * Set bAutoSaveOnStop = false and use this instead for per-death saves.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Replay|Storage")
+    bool bSaveFullReplayOnDeath = true;
+
+    /**
+     * Slot name used when saving the full match replay on death.
+     * Separate from ReplaySaveSlot so death replays don't overwrite
+     * manually triggered saves.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Replay|Storage")
+    FString DeathReplaySaveSlot = TEXT("SubmarineFullReplay_01");
 
     // -----------------------------------------------------------------------
     //  Fade Library

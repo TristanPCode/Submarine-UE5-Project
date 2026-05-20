@@ -58,6 +58,10 @@ ASubmarinePawn::ASubmarinePawn()
 
     CollisionHandler = CreateDefaultSubobject<USubmarineCollisionComponent>(TEXT("CollisionHandler"));
     PhysicsHandler = CreateDefaultSubobject<USubmarinePhysicsComponent>(TEXT("PhysicsHandler"));
+    RadarHandler = CreateDefaultSubobject<URadarComponent>(TEXT("RadarHandler"));
+
+    TorpedoHandler = CreateDefaultSubobject<USubmarineTorpedoComponent>(TEXT("TorpedoHandler"));
+    
 }
 
 // -----------------------------------------------------------------------------
@@ -125,6 +129,12 @@ void ASubmarinePawn::BeginPlay()
             if (SubmarineMappingContext)
                 Subsystem->AddMappingContext(SubmarineMappingContext, 0);
         }
+    }
+
+    if (TorpedoHandler)
+    {
+        TorpedoHandler->OnTorpedoFired.AddDynamic(
+            this, &ASubmarinePawn::OnTorpedoFiredForVulnerability);
     }
 }
 
@@ -339,6 +349,15 @@ void ASubmarinePawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCompo
 {
     Super::SetupPlayerInputComponent(PlayerInputComponent);
 
+    // This log tells us if P2's pawn ever gets input bound
+    AController* Ctrl = GetController();
+    UE_LOG(LogTemp, Log,
+        TEXT("[SubmarinePawn] SetupPlayerInputComponent: Pawn='%s'  "
+            "Controller='%s'  InputComp='%s'"),
+        *GetName(),
+        Ctrl ? *Ctrl->GetName() : TEXT("NULL"),
+        PlayerInputComponent ? *PlayerInputComponent->GetClass()->GetName() : TEXT("NULL"));
+
     UEnhancedInputComponent* EIC = Cast<UEnhancedInputComponent>(PlayerInputComponent);
     if (!EIC)
     {
@@ -400,6 +419,11 @@ void ASubmarinePawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCompo
         EIC->BindAction(IA_Camera3rdPerson, ETriggerEvent::Started, this, &ASubmarinePawn::OnCamera3rdPersonStarted);
         EIC->BindAction(IA_Camera3rdPerson, ETriggerEvent::Triggered, this, &ASubmarinePawn::OnCamera3rdPersonTriggered);
         EIC->BindAction(IA_Camera3rdPerson, ETriggerEvent::Completed, this, &ASubmarinePawn::OnCamera3rdPersonCompleted);
+    }
+
+    if (IA_RadarScan)
+    {
+        EIC->BindAction(IA_RadarScan, ETriggerEvent::Started, this, &ASubmarinePawn::OnRadarScan);
     }
 }
 
@@ -817,7 +841,7 @@ void ASubmarinePawn::TickFinalMovement(float DeltaTime)
 }
 
 // -----------------------------------------------------------------------------
-//  Camera switching
+//  Camera switching / apply
 // -----------------------------------------------------------------------------
 void ASubmarinePawn::ActivateCamera(ESubmarineCameraState NewState)
 {
@@ -825,6 +849,15 @@ void ASubmarinePawn::ActivateCamera(ESubmarineCameraState NewState)
     Camera->SetActive(NewState == ESubmarineCameraState::POV);
     PeriscopeCamera->SetActive(NewState == ESubmarineCameraState::Periscope);
     ThirdPersonCamera->SetActive(NewState == ESubmarineCameraState::ThirdPerson);
+}
+
+void ASubmarinePawn::ApplyCameraFOV(float FOV)
+{
+    // Apply to all camera components
+    TArray<UCameraComponent*> Cameras;
+    GetComponents<UCameraComponent>(Cameras);
+    for (UCameraComponent* Cam : Cameras)
+        Cam->SetFieldOfView(FOV);
 }
 
 void ASubmarinePawn::TickCameraSwitch(float DeltaTime)
@@ -911,9 +944,9 @@ void ASubmarinePawn::IncrementLinearState(int32 Direction)
     const int32 Next = FMath::Clamp(Current + Direction, 0, 6);
     const ELinearSpeedState OldState = LinearSpeedState;
     LinearSpeedState = static_cast<ELinearSpeedState>(Next);
-    /*if (LinearSpeedState != OldState) {
-        OnLinearStateChanged.Broadcast(LinearSpeedState);
-    }*/
+    if (LinearSpeedState != OldState && Characteristics) {
+        PerPawnLinearStateChanged.Broadcast(LinearSpeedState);
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -1128,11 +1161,17 @@ void ASubmarinePawn::OnMouseX(const FInputActionValue& Value)
 
     if (CameraState == ESubmarineCameraState::Periscope)
     {
-        PeriscopeYawOffset += Axis * Stats->PeriscopeYawSensitivity;
+        const float Sens = bUsesGamepad
+            ? Stats->PeriscopeYawSensitivity_Gamepad
+            : Stats->PeriscopeYawSensitivity;
+        PeriscopeYawOffset += Axis * Sens;
     }
     else if (CameraState == ESubmarineCameraState::ThirdPerson)
     {
-        ThirdPersonOrbitYaw += Axis * Stats->ThirdPersonYawSensitivity;
+        const float Sens = bUsesGamepad
+            ? Stats->ThirdPersonYawSensitivity_Gamepad
+            : Stats->ThirdPersonYawSensitivity;
+        ThirdPersonOrbitYaw += Axis * Sens;
     }
     // POV mode: mouse X does nothing (turning is done with keyboard)
 }
@@ -1144,8 +1183,11 @@ void ASubmarinePawn::OnMouseY(const FInputActionValue& Value)
 
     if (CameraState == ESubmarineCameraState::ThirdPerson)
     {
+        const float Sens = bUsesGamepad
+            ? Stats->ThirdPersonPitchSensitivity_Gamepad
+            : Stats->ThirdPersonPitchSensitivity;
         ThirdPersonOrbitPitch = FMath::Clamp(
-            ThirdPersonOrbitPitch + Axis * Stats->ThirdPersonPitchSensitivity,
+            ThirdPersonOrbitPitch + Axis * Sens,
             Stats->ThirdPersonMinPitch,
             Stats->ThirdPersonMaxPitch);
     }
@@ -1154,13 +1196,47 @@ void ASubmarinePawn::OnMouseY(const FInputActionValue& Value)
 
 void ASubmarinePawn::OnScrollZoom(const FInputActionValue& Value)
 {
-    if (CameraState != ESubmarineCameraState::ThirdPerson) return;
+    // This action receives:
+    //   Mouse:   MouseWheelAxis via ETriggerEvent::Triggered -- one delta per scroll tick
+    //   Gamepad: DPAD_Up (+1) or DPAD_Down (-1) via ETriggerEvent::Triggered
+    //            with a "Hold + Pulse" trigger chain in the IMC for continuous zoom.
+    //            Set up in IMC: Triggered at interval (e.g. 0.1s) while held.
+    //            Add a "Scale" modifier of -1 on the DPAD_Down binding.
+    //
+    // Both paths arrive here as a float delta -- no device-specific code needed.
+    const float ScrollDelta = Value.Get<float>();
+    if (FMath::IsNearlyZero(ScrollDelta)) return;
 
-    const USubmarineCharacteristics* Stats = GetStats();
-    ThirdPersonRadius = FMath::Clamp(
-        ThirdPersonRadius - Value.Get<float>() * Stats->ThirdPersonScrollSpeed,
-        Stats->ThirdPersonMinRadius,
-        Stats->ThirdPersonMaxRadius);
+    if (CameraState == ESubmarineCameraState::Periscope)
+    {
+        if (RadarHandler)
+        {
+            const URadarSettings* RS = RadarHandler->Settings
+                ? RadarHandler->Settings.Get()
+                : GetDefault<URadarSettings>();
+            RadarHandler->IncrementZoom(ScrollDelta * (RS ? RS->ZoomStep : 0.2f));
+
+            if (PeriscopeCamera)
+            {
+                const float BaseFOV = 90.f;
+                PeriscopeCamera->SetFieldOfView(
+                    BaseFOV / FMath::Max(RadarHandler->GetZoom(), 0.1f));
+            }
+        }
+        return;
+    }
+
+    if (CameraState == ESubmarineCameraState::ThirdPerson)
+    {
+        const USubmarineCharacteristics* Stats = GetStats();
+        const float ScrollSpeed = bUsesGamepad
+            ? Stats->ThirdPersonScrollSpeed_Gamepad
+            : Stats->ThirdPersonScrollSpeed;
+        ThirdPersonRadius = FMath::Clamp(
+            ThirdPersonRadius - ScrollDelta * ScrollSpeed,
+            Stats->ThirdPersonMinRadius,
+            Stats->ThirdPersonMaxRadius);
+    }
 }
 
 // Camera periscope — tap on Started, hold fires in Tick
@@ -1218,6 +1294,18 @@ void ASubmarinePawn::OnCamera3rdPersonCompleted(const FInputActionValue& Value)
     bThirdPersonHoldFired = false;
 }
 
+void ASubmarinePawn::OnTorpedoFiredForVulnerability(
+    ETorpedoType TorpedoType, ATorpedoPawn* TorpedoActor)
+{
+    NotifyTorpedoFired();
+}
+
+void ASubmarinePawn::OnRadarScan(const FInputActionValue& Value)
+{
+    if (RadarHandler)
+        RadarHandler->TriggerScan();
+}
+
 
 // ============================================================================
 //  ITrackableSubmarine  --  interface implementation
@@ -1248,6 +1336,11 @@ float ASubmarinePawn::GetCurrentDepth() const
 float ASubmarinePawn::GetCurrentPitch() const
 {
     return CurrentPitch;
+}
+
+float ASubmarinePawn::GetCurrentYaw() const
+{
+    return GetActorRotation().Yaw;
 }
 
 int32 ASubmarinePawn::GetVerticalStateIndex() const
@@ -1291,6 +1384,13 @@ int32 ASubmarinePawn::GetSpecialAmmoCapacity() const
     return TorpedoHandler->SpecialTorpedoCapacity;
 }
 
+ETorpedoType ASubmarinePawn::GetSpecialTorpedoType() const
+{
+    if (TorpedoHandler && TorpedoHandler->SpecialTorpedoCharacteristics)
+        return TorpedoHandler->SpecialTorpedoCharacteristics->TorpedoType;
+    return ETorpedoType::Heavy;
+}
+
 float ASubmarinePawn::GetFireCooldownRatio() const
 {
     if (!TorpedoHandler) return 1.f;
@@ -1319,14 +1419,79 @@ FText ASubmarinePawn::GetDisplayName() const
     return FText::FromString(GetActorLabel());
 }
 
-// -- Radar placeholder -------------------------------------------------------
+int32 ASubmarinePawn::GetLevel() const
+{
+    return SubmarineLevel;
+}
+
+// -- Radar  ------------------------------------------------------------------
+
+bool ASubmarinePawn::GetIsPeriscopeActive() const
+{
+    return CameraState == ESubmarineCameraState::Periscope;
+}
+
+float ASubmarinePawn::GetCurrentZoom() const
+{
+    return RadarHandler ? RadarHandler->GetZoom() : 1.f;
+}
+
+float ASubmarinePawn::GetCameraFOV() const
+{
+    // Return FOV of the active camera
+    switch (CameraState)
+    {
+    case ESubmarineCameraState::Periscope:
+        return PeriscopeCamera ? PeriscopeCamera->FieldOfView : 90.f;
+    case ESubmarineCameraState::ThirdPerson:
+        return ThirdPersonCamera ? ThirdPersonCamera->FieldOfView : 90.f;
+    default:
+        return Camera ? Camera->FieldOfView : 90.f;
+    }
+}
+
+FVector ASubmarinePawn::GetCameraForwardVector() const
+{
+    // Return the forward vector of whichever camera is currently active.
+    // In periscope mode the camera can rotate independently of the hull,
+    // so we must use the camera component's own world forward, not the pawn's.
+    switch (CameraState)
+    {
+    case ESubmarineCameraState::Periscope:
+        return PeriscopeCamera ? PeriscopeCamera->GetForwardVector() : GetActorForwardVector();
+    case ESubmarineCameraState::ThirdPerson:
+        return ThirdPersonCamera ? ThirdPersonCamera->GetForwardVector() : GetActorForwardVector();
+    default:
+        return Camera ? Camera->GetForwardVector() : GetActorForwardVector();
+    }
+}
+
+float ASubmarinePawn::GetVulnerabilityScore() const
+{
+    return RadarHandler ? RadarHandler->GetVulnerabilityScore() : 0.f;
+}
+
+void ASubmarinePawn::NotifyRadarUsed()
+{
+    if (RadarHandler)
+        RadarHandler->TriggerScan();
+}
+
+void ASubmarinePawn::NotifyTorpedoFired()
+{
+    if (RadarHandler)
+        RadarHandler->NotifyTorpedoFired();
+}
 
 const TArray<FDetectedEntry>& ASubmarinePawn::GetDetectionEntries() const
 {
-    // Empty until RadarComponent is implemented in Phase 4.
-    static const TArray<FDetectedEntry> EmptyEntries;
-    return EmptyEntries;
+    return RadarHandler->GetDetectionEntries();
 }
+
+float ASubmarinePawn::GetScanCooldownRatio() const
+    {
+        return RadarHandler ? RadarHandler->GetScanCooldownRatio() : 1.f;
+    }
 
 // -- Delegate getters --------------------------------------------------------
 //
@@ -1375,6 +1540,7 @@ FOnFireCooldownComplete& ASubmarinePawn::GetOnFireCooldownDelegate()
 
 FOnLinearStateChanged& ASubmarinePawn::GetOnLinearStateChangedDelegate()
 {
-    check(Characteristics);
-    return Characteristics->OnLinearStateChanged;
+    // Return per-pawn delegate (NOT the shared DA delegate).
+    // This ensures each submarine's HUD module only reacts to ITS OWN state changes.
+    return PerPawnLinearStateChanged;
 }

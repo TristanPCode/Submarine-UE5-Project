@@ -10,6 +10,31 @@
 USubmarineTorpedoComponent::USubmarineTorpedoComponent()
 {
     PrimaryComponentTick.bCanEverTick = true;
+    // Required to receive InitializeComponent() call
+    bWantsInitializeComponent = true;
+}
+
+// -----------------------------------------------------------------------------
+//  InitializeComponent
+//  Fires after all Blueprint CDO/default overrides are applied.
+//  Safe to read capacity values here.
+// -----------------------------------------------------------------------------
+void USubmarineTorpedoComponent::InitializeComponent()
+{
+    Super::InitializeComponent();
+
+    // Skip CDO pass -- GetOwner() is null on CDO, only initialize real instances.
+    if (!GetOwner()) return;
+
+    // Guard against double-call (UE can call this twice on some init paths).
+    if (bAmmoInitialized) return;
+    bAmmoInitialized = true;
+
+    // Initialize current ammo from capacity now that all BP defaults are applied.
+    CurrentNormalTorpedoes = NormalTorpedoCapacity;
+    CurrentSpecialTorpedoes = SpecialTorpedoCapacity;
+    UE_LOG(LogTemp, Log, TEXT("[TorpedoComp] InitializeComponent: SP: %d N: %d"),
+        SpecialTorpedoCapacity, NormalTorpedoCapacity);
 }
 
 // -----------------------------------------------------------------------------
@@ -19,9 +44,12 @@ void USubmarineTorpedoComponent::BeginPlay()
 {
     Super::BeginPlay();
 
-    // Fill ammo to capacity on start
-    CurrentNormalTorpedoes = NormalTorpedoCapacity;
-    CurrentSpecialTorpedoes = SpecialTorpedoCapacity;
+    // Ammo counts initialized in InitializeComponent (after BP defaults applied).
+    // Clamp here as a safety net in case of late initialization.
+    CurrentNormalTorpedoes = FMath::Clamp(CurrentNormalTorpedoes, 0, NormalTorpedoCapacity);
+    CurrentSpecialTorpedoes = FMath::Clamp(CurrentSpecialTorpedoes, 0, SpecialTorpedoCapacity);
+    UE_LOG(LogTemp, Log, TEXT("[TorpedoComp] InitializeComponent: SP: %d N: %d"),
+        SpecialTorpedoCapacity, NormalTorpedoCapacity);
 
     bWasOnCooldown = false;
 

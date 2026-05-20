@@ -10,17 +10,41 @@
 #include "ReplayData.h"
 #include "ScreenFadeComponent.h"
 #include "CameraBlendSettings.h"
+#include "SpectatorTrackerComponent.h"
+#include "SpawnManagerComponent.h"
+#include "RuntimeMatchSettings.h"
+#include "HUDGlobalDefaults.h"
+#include "HUDTransitionManager.h"
+#include "Load/SubmarineAssetLoader.h"
+#include "Load/SubmarineLoadingScreen.h"
+#include "Load/LoadingScreenSettings.h"
+#include "Billboard/SubmarineInfoBillboardComponent.h"
+#include "Billboard/InfoBillboardContextSettings.h"
+#include "Billboard/BillboardDisplayComponent.h"
+#include "SubmarineGameInstance.h"
 #include "EngineUtils.h"
 #include "GameFramework/PlayerController.h"
+#include "Engine/GameInstance.h"
+#include "TimerManager.h"
 
 ASubmarineGameMode::ASubmarineGameMode()
 {
-    DefaultPawnClass = ASubmarinePawn::StaticClass();
+    // Prevent UE5 from auto-spawning a pawn at PlayerStart actors.
+    DefaultPawnClass = nullptr;
 
     ReplayRecorder = CreateDefaultSubobject<UReplayRecorderComponent>(TEXT("ReplayRecorder"));
     ReplayPlayback = CreateDefaultSubobject<UReplayPlaybackComponent>(TEXT("ReplayPlayback"));
     DeathSequence = CreateDefaultSubobject<UDeathSequenceComponent>(TEXT("DeathSequence"));
-    ScreenFade = CreateDefaultSubobject<UScreenFadeComponent>(TEXT("ScreenFade"));
+    SpawnManager = CreateDefaultSubobject<USpawnManagerComponent>(TEXT("SpawnManager"));
+}
+
+// ---------------------------------------------------------------------------
+//  GetPlayerFade  (helper -- finds ScreenFadeComponent on a PlayerController)
+// ---------------------------------------------------------------------------
+static UScreenFadeComponent* GetPlayerFade(APlayerController* PC)
+{
+    if (!PC) return nullptr;
+    return PC->FindComponentByClass<UScreenFadeComponent>();
 }
 
 // ---------------------------------------------------------------------------
@@ -32,41 +56,13 @@ void ASubmarineGameMode::BeginPlay()
 
     UE_LOG(LogTemp, Log, TEXT("[GameMode] BeginPlay START"));
 
-    // Forward settings to components
-    if (ReplayRecorder)
-    {
-        ReplayRecorder->Settings = ReplaySettings;
-        UE_LOG(LogTemp, Log, TEXT("[GameMode] ReplayRecorder settings: %s"),
-            ReplaySettings ? *ReplaySettings->GetName() : TEXT("NONE - using CDO defaults"));
-    }
-    else
-    {
-        UE_LOG(LogTemp, Error, TEXT("[GameMode] ReplayRecorder component is NULL!"));
-    }
-
-
-    if (ReplayPlayback)
-    {
-        ReplayPlayback->Settings = ReplaySettings;
-        UE_LOG(LogTemp, Log, TEXT("[GameMode] ReplayPlayback settings: %s"),
-            ReplaySettings ? *ReplaySettings->GetName() : TEXT("NONE - using CDO defaults"));
-    }
-    else
-    {
-        UE_LOG(LogTemp, Error, TEXT("[GameMode] ReplayPlayback component is NULL!"));
-    }
-
+    // --- Bind death sequence delegate ---
     if (DeathSequence)
     {
-        DeathSequence->ReplaySettings = ReplaySettings;
-
-        // Bind the completion delegate — clear first to avoid double-binding
-        // if BeginPlay is called more than once (e.g. PIE restart)
         DeathSequence->OnDeathSequenceComplete.RemoveDynamic(
             this, &ASubmarineGameMode::OnDeathSequenceComplete);
         DeathSequence->OnDeathSequenceComplete.AddDynamic(
             this, &ASubmarineGameMode::OnDeathSequenceComplete);
-
         UE_LOG(LogTemp, Log, TEXT("[GameMode] DeathSequence delegate bound OK"));
     }
     else
@@ -74,32 +70,378 @@ void ASubmarineGameMode::BeginPlay()
         UE_LOG(LogTemp, Error, TEXT("[GameMode] DeathSequence component is NULL!"));
     }
 
-    // Gameplay fade-in (from black when the match starts)
-    const UReplaySettings* RS = ReplaySettings
-        ? ReplaySettings.Get() : GetDefault<UReplaySettings>();
+    // Resolve runtime match settings
+    USubmarineGameInstance* SGI =
+        Cast<USubmarineGameInstance>(GetGameInstance());
 
-    if (ScreenFade && RS) {
-        ScreenFade->InitFadeLibrary(RS->FadeLibrary);
+    if (SGI && SGI->GetRuntimeMatchSettings())
+    {
+        ActiveRMS = SGI->GetRuntimeMatchSettings();
+        UE_LOG(LogTemp, Log,
+            TEXT("[GameMode] Using RuntimeMatchSettings from GameInstance"));
+    }
+    else
+    {
+        ActiveRMS = URuntimeMatchSettings::CreateFromDataAsset(this, DefaultMatchSettings);
+        UE_LOG(LogTemp, Log,
+            TEXT("[GameMode] Created RuntimeMatchSettings from DefaultMatchSettings DA"));
     }
 
-    // Gameplay fade-in: screen starts black, fades to clear when match begins
-    if (ScreenFade && ScreenFade->HasFadeEntry("Gameplay"))
+    if (!ActiveRMS)
     {
+        UE_LOG(LogTemp, Error,
+            TEXT("[GameMode] BeginPlay: no RuntimeMatchSettings available. "
+                "Assign DefaultMatchSettings in the GameMode Blueprint."));
+        return;
+    }
+
+    // Check if we should enter replay mode instead of normal gameplay
+    if (SGI && SGI->bStartInReplayMode)
+    {
+        SGI->bStartInReplayMode = false;
+        bIsReplayMode = true;
+    }
+
+    // bIsReplayMode can also be set directly as a UPROPERTY on this GameMode
+    // (useful for testing without a menu -- set it in BP_SubmarineGameMode defaults)
+    if (bIsReplayMode)
+    {
+        EnterReplayMode();
+        return;
+    }
+
+    // Show loading screen FIRST -- block everything visually
+    ShowLoadingScreen();
+
+    // Preload assets
+    USubmarineAssetLoader* Loader = SGI
+        ? SGI->GetSubsystem<USubmarineAssetLoader>() : nullptr;
+
+    if (Loader)
+    {
+        // Inject global HUD defaults so ALL contexts are preloaded
+        if (HUDGlobalDefaults)
+            Loader->AddGlobalHUDDefaults(HUDGlobalDefaults);
+
+        FOnPreloadComplete Callback;
+        Callback.BindDynamic(this, &ASubmarineGameMode::OnAssetsPreloaded);
+        Loader->PreloadMatchAssets(ActiveRMS, Callback);
+        UE_LOG(LogTemp, Log, TEXT("[GameMode] Asset preload started..."));
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("[GameMode] No USubmarineAssetLoader found. "
+                "Ensure Project Settings -> Maps & Modes -> Game Instance Class "
+                "is set to BP_SubmarineGameInstance. Spawning immediately."));
+        OnAssetsPreloaded();
+    }
+
+    if (ReplayRecorder)
+    {
+        ReplayRecorder->StartRecording();
+        UE_LOG(LogTemp, Log, TEXT("[GameMode] Recording started."));
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  ShowLoadingScreen
+// ---------------------------------------------------------------------------
+void ASubmarineGameMode::ShowLoadingScreen()
+{
+    if (!LoadingScreenClass)
+    {
+        UE_LOG(LogTemp, Log,
+            TEXT("[GameMode] ShowLoadingScreen: no LoadingScreenClass set -- skipping. "
+                "Assign BP_LoadingScreen to the GameMode if you want a loading screen."));
+        return;
+    }
+
+    LoadingScreenStartTime = GetWorld()->GetTimeSeconds();
+
+    APlayerController* PC = GetWorld()->GetFirstPlayerController();
+    if (!PC) return;
+
+    ActiveLoadingScreen = CreateWidget<USubmarineLoadingScreen>(PC, LoadingScreenClass);
+    if (!ActiveLoadingScreen) return;
+
+    ActiveLoadingScreen->ApplySettings(LoadingScreenSettings);
+    ActiveLoadingScreen->AddToPlayerScreen(100);
+
+    // Tick progress bar
+    GetWorld()->GetTimerManager().SetTimer(
+        LoadingProgressTimer,
+        this, &ASubmarineGameMode::TickLoadingProgress,
+        0.05f, true);
+
+    UE_LOG(LogTemp, Log, TEXT("[GameMode] Loading screen shown"));
+}
+
+// ---------------------------------------------------------------------------
+//  TickLoadingProgress
+// ---------------------------------------------------------------------------
+void ASubmarineGameMode::TickLoadingProgress()
+{
+    if (!ActiveLoadingScreen) return;
+
+    USubmarineGameInstance* SGI = Cast<USubmarineGameInstance>(GetGameInstance());
+    USubmarineAssetLoader* Loader = SGI
+        ? SGI->GetSubsystem<USubmarineAssetLoader>() : nullptr;
+
+    const float AssetRatio = Loader ? Loader->GetLoadProgress() : 1.f;
+
+    // Time ratio: how far through MinLoadingScreenTime we are
+    float TimeRatio = 1.f;
+    if (MinLoadingScreenTime > 0.f)
+    {
+        const float Elapsed = GetWorld()->GetTimeSeconds() - LoadingScreenStartTime;
+        TimeRatio = FMath::Clamp(Elapsed / MinLoadingScreenTime, 0.f, 1.f);
+    }
+
+    const float DisplayProgress = FMath::Min(AssetRatio, TimeRatio);
+    ActiveLoadingScreen->SetProgress(DisplayProgress);
+}
+
+// ---------------------------------------------------------------------------
+//  HideLoadingScreen
+// ---------------------------------------------------------------------------
+void ASubmarineGameMode::HideLoadingScreen()
+{
+    GetWorld()->GetTimerManager().ClearTimer(LoadingProgressTimer);
+
+    if (ActiveLoadingScreen)
+    {
+        // Snap camera to black BEFORE removing the loading screen.
+        // This ensures the camera is black on the exact same frame the
+        // loading screen widget disappears, preventing a 1-frame world flash.
         for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
         {
-            if (APlayerController* PC = Cast<APlayerController>(It->Get()))
+            APlayerController* PC = Cast<APlayerController>(It->Get());
+            if (PC && PC->IsLocalPlayerController())
+                PC->ClientSetCameraFade(true, FColor::Black, FVector2D(0.f, 0.f), 0.f, true);
+        }
+        ActiveLoadingScreen->RemoveFromParent();
+        ActiveLoadingScreen = nullptr;
+        UE_LOG(LogTemp, Log, TEXT("[GameMode] Loading screen hidden, camera snapped to black"));
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  OnAssetsPreloaded and ExecutePostLoad
+// ---------------------------------------------------------------------------
+
+void ASubmarineGameMode::OnAssetsPreloaded()
+{
+    UE_LOG(LogTemp, Log, TEXT("[GameMode] Assets preloaded. Waiting for minimum screen time..."));
+
+    const float TimeElapsed = GetWorld()->GetTimeSeconds() - LoadingScreenStartTime;
+    const float RemainingWait = FMath::Max(0.f, MinLoadingScreenTime - TimeElapsed);
+
+    if (RemainingWait <= 0.f)
+    {
+        ExecutePostLoad();
+        return;
+    }
+
+    FTimerHandle MinTimeTimer;
+    GetWorld()->GetTimerManager().SetTimer(
+        MinTimeTimer,
+        this, &ASubmarineGameMode::ExecutePostLoad,
+        RemainingWait, false);
+}
+
+void ASubmarineGameMode::ExecutePostLoad()
+{
+    HideLoadingScreen();
+    if (!SpawnManager || !ActiveRMS) return;
+    SpawnManager->ResolveSpawnEntries(ActiveRMS);
+    SpawnManager->ExecuteSpawn(ActiveRMS, HUDGlobalDefaults);
+
+    // Initialize billboard data on each submarine pawn.
+    // BillboardDisplayComponent on each PC handles all rendering.
+    if (HUDGlobalDefaults)
+    {
+        UInfoBillboardContextSettings* BillboardCtx =
+            HUDGlobalDefaults->ResolveBillboard(EHUDContext::Gameplay);
+
+        // Step 1: set identity data on every submarine's billboard component
+        for (const FSpawnedSubmarineEntry& Entry : SpawnManager->GetSpawnEntries())
+        {
+            if (!Entry.SpawnedPawn.IsValid()) continue;
+            ASubmarinePawn* Pawn = Entry.SpawnedPawn.Get();
+
+            USubmarineInfoBillboardComponent* Billboard =
+                Pawn->FindComponentByClass<USubmarineInfoBillboardComponent>();
+            if (!Billboard) continue;
+
+            const FMatchTeamSettings& TeamSettings =
+                ActiveRMS->GetTeamSettings(Entry.TeamIndex);
+
+            Billboard->InitializeBillboard(
+                EBillboardEntityType::Submarine,
+                Entry.TeamIndex,
+                Entry.bIsCPU,
+                TEXT(""));
+            Billboard->EntityTeamName = TeamSettings.TeamName;
+            Billboard->EntityDisplayName = Entry.DisplayName;
+
+            UE_LOG(LogTemp, Log,
+                TEXT("[BB:Init] Sub='%s'  Team=%d  CPU=%d  DisplayName='%s'"),
+                *Pawn->GetName(), Entry.TeamIndex, Entry.bIsCPU ? 1 : 0,
+                *Entry.DisplayName);
+        }
+
+        // Step 2: give each local PC its own BillboardDisplayComponent context.
+        // This is what actually creates and positions the per-player widgets.
+        for (const FSpawnedSubmarineEntry& E2 : SpawnManager->GetSpawnEntries())
+        {
+            if (!E2.bIsLocalPlayer) continue;
+
+            // Find this player's PC
+            APlayerController* PC = nullptr;
+            if (UGameInstance* GI = GetGameInstance())
             {
-                UE_LOG(LogTemp, Log,
-                    TEXT("[GameMode] BeginPlay GameplayFadeIn for PC='%s'"), *PC->GetName());
-                ScreenFade->PlayFadeIn(PC, "Gameplay");
+                const TArray<ULocalPlayer*>& LPs = GI->GetLocalPlayers();
+                if (LPs.IsValidIndex(E2.LocalPlayerIndex))
+                    PC = LPs[E2.LocalPlayerIndex]->GetPlayerController(GetWorld());
             }
+            if (!PC) continue;
+
+            UBillboardDisplayComponent* DisplayComp =
+                PC->FindComponentByClass<UBillboardDisplayComponent>();
+            if (!DisplayComp)
+            {
+                UE_LOG(LogTemp, Warning,
+                    TEXT("[BB:Init] No BillboardDisplayComponent on PC='%s' -- "
+                        "add it to BP_PlayerController and set WidgetClass"),
+                    *PC->GetName());
+                continue;
+            }
+
+            DisplayComp->SetBillboardContext(BillboardCtx, E2.TeamIndex, ActiveRMS);
+            UE_LOG(LogTemp, Log,
+                TEXT("[BB:Init] PC='%s'  P%d  Team=%d  Ctx=%s"),
+                *PC->GetName(), E2.LocalPlayerIndex, E2.TeamIndex,
+                BillboardCtx ? *BillboardCtx->GetName() : TEXT("NULL"));
         }
     }
 
-    UE_LOG(LogTemp, Log, TEXT("[GameMode] BeginPlay complete. Recording: %s"),
-        IsRecording() ? TEXT("YES") : TEXT("NO"));
-}
+    // Fade initialiaztion and Fade-In Gameplay
+    if (ReplaySettings && ReplaySettings->FadeLibrary.Num() > 0)
+    {
+        // Step 1 (immediate): init fade library and set HUD to 0 NOW.
+        // The HUD widget doesn't exist yet but we pre-zero any existing widget
+        // and ensure the fade library is populated before the deferred call.
+        bool bFadeGameplayExist = false;
+        bool bFadeGamplay = false;
+        bool bFadeHUDDarkness = false;
+        float HUDFadeInDuration = 0.f;
+        float HUDFadeStartTime = 0.f;
+        UWorld* W = GetWorld();
 
+        for (FConstPlayerControllerIterator ItFade = GetWorld()->GetPlayerControllerIterator();
+            ItFade; ++ItFade)
+        {
+            APlayerController* PC = Cast<APlayerController>(ItFade->Get());
+            if (!PC || !PC->IsLocalPlayerController()) continue;
+            if (UHUDTransitionManager* TransMgr = PC->FindComponentByClass<UHUDTransitionManager>())
+                TransMgr->SetHUDOpacity(0.f);
+            if (UScreenFadeComponent* FC = PC->FindComponentByClass<UScreenFadeComponent>())
+                FC->InitFadeLibrary(ReplaySettings->FadeLibrary);
+
+            if (UScreenFadeComponent* Fade = PC->FindComponentByClass<UScreenFadeComponent>())
+            {
+                FScreenFadeSettings FadeGameplay;
+                bFadeGameplayExist = Fade->HasFadeEntry("Gameplay");
+                if (bFadeGameplayExist) {
+                    FadeGameplay = Fade->GetFadeEntry("Gameplay");
+                    HUDFadeInDuration = FadeGameplay.bFadeIn ? FadeGameplay.FadeInDuration : 0.f;
+                    HUDFadeStartTime = FadeGameplay.bBlackScreenIn ? FadeGameplay.BlackScreenInDuration : 0.f;
+                    bFadeHUDDarkness = FadeGameplay.bFadeInHUDDarkness;
+                }
+                bFadeGamplay = bFadeGameplayExist && (FadeGameplay.bBlackScreenIn || FadeGameplay.bFadeIn); // Should be the same in all HUD loops
+                if (bFadeGamplay)
+                {
+                    W->GetTimerManager().SetTimerForNextTick([W, Fade, PC]()
+                        {
+                            Fade->PlayFadeIn(PC, "Gameplay");
+                            UE_LOG(LogTemp, Log,
+                                TEXT("[GameMode] PlayFadeIn(Gameplay) (one tick delayed) for PC='%s'"),
+                                *PC->GetName());
+                            if (PC && PC->IsLocalPlayerController()) {
+                                if (UHUDTransitionManager* TM = PC->FindComponentByClass<UHUDTransitionManager>())
+                                {
+                                    TM->SetHUDOpacity(0.f);
+                                    UE_LOG(LogTemp, Log,
+                                        TEXT("[GameMode] HUD Opacity Reset at 0 for PC='%s'"),
+                                        *PC->GetName());
+                                }
+                            }
+                        });
+                }
+                else
+                {
+                    // Clear camera snap-to-black from loading screen and show HUD immediately.
+                    PC->ClientSetCameraFade(false, FColor::Black, FVector2D(0.f, 1.f), 0.f, false);
+
+                    if (UHUDTransitionManager* TM = PC->FindComponentByClass<UHUDTransitionManager>())
+                        TM->SetHUDOpacity(1.f);
+                    UE_LOG(LogTemp, Warning,
+                        TEXT("[GameMode] No Gameplay fade entry for PC='%s' -- "
+                            "HUD at 1.0. Check FadeLibrary key is exactly Gameplay."),
+                        *PC->GetName());
+                }
+            }
+        }
+
+        // Step 2 (next tick): HUD widget is now created and in viewport.
+        // Re-zero opacity (widget resets to 1 on creation) then start fade-in.
+        // One tick is enough -- widget creation and AddToPlayerScreen both happen
+        // in the same deferred tick from InitializeHUDForPlayer.
+        if (bFadeGamplay) {
+            W->GetTimerManager().SetTimerForNextTick([W]()
+                {
+                    if (!W) return;
+                    for (FConstPlayerControllerIterator ItOpacity = W->GetPlayerControllerIterator(); ItOpacity; ++ItOpacity)
+                    {
+                        APlayerController* PC = Cast<APlayerController>(ItOpacity->Get());
+                        if (!PC || !PC->IsLocalPlayerController()) continue;
+                        if (UHUDTransitionManager* TM = PC->FindComponentByClass<UHUDTransitionManager>())
+                        {
+                            TM-> SetHUDOpacity(0.f);
+                            UE_LOG(LogTemp, Log,
+                                TEXT("[GameMode] HUD Opacity Reset at 0 for PC='%s'"),
+                                *PC->GetName());
+                        }
+                    }
+                });
+        }
+        
+
+        // Step 3 (after black screen in or next tick):
+        // Apply FadeIn HUD.
+        FTimerHandle HUDFadeTimer;
+        if (bFadeGamplay) {
+            W->GetTimerManager().SetTimer(HUDFadeTimer, FTimerDelegate::CreateLambda([W, HUDFadeInDuration, bFadeHUDDarkness]()
+                {
+                    if (!W) return;
+                    for (FConstPlayerControllerIterator ItHUDFade = W->GetPlayerControllerIterator(); ItHUDFade; ++ItHUDFade)
+                    {
+                        APlayerController* PC = Cast<APlayerController>(ItHUDFade->Get());
+                        if (!PC || !PC->IsLocalPlayerController()) continue;
+                        if (UHUDTransitionManager* TM = PC->FindComponentByClass<UHUDTransitionManager>())
+                        {
+                            TM->HUDFadeIn(HUDFadeInDuration, bFadeHUDDarkness);
+                            UE_LOG(LogTemp, Log,
+                                TEXT("[GameMode] HUDFadeIn(%.2fs) for PC='%s'"),
+                                HUDFadeInDuration, *PC->GetName());
+                        }
+                    }
+                }),
+                FMath::Max(HUDFadeStartTime, 0.01f), false);
+        }
+    }
+}
 // ---------------------------------------------------------------------------
 //  OnSubmarineDied
 // 
@@ -114,6 +456,24 @@ void ASubmarineGameMode::OnSubmarineDied(ASubmarinePawn* DeadSubmarine,
     AController* DeadController,
     AActor* Killer)
 {
+    // -----------------------------------------------------------------------
+    //  CRITICAL GUARD: CPU submarines and remote players must NEVER trigger
+    //  the death sequence, replay camera, or any HUD/fade transition.
+    //  Only local human players go through this flow.
+    // -----------------------------------------------------------------------
+    APlayerController* DeadPC = Cast<APlayerController>(DeadController);
+    if (!DeadPC || !DeadPC->IsLocalPlayerController())
+    {
+        // CPU or remote player — just destroy the pawn cleanly
+        UE_LOG(LogTemp, Log,
+            TEXT("[GameMode] OnSubmarineDied: '%s' is CPU/remote — "
+                "skipping death sequence"),
+            DeadSubmarine ? *DeadSubmarine->GetName() : TEXT("NULL"));
+        if (DeadSubmarine) DeadSubmarine->Destroy();
+        return;
+    }
+    // Everything below only runs for human local players:
+
     UE_LOG(LogTemp, Log, TEXT("[GameMode] OnSubmarineDied called: Sub='%s' Controller='%s' Killer='%s'"),
         DeadSubmarine ? *DeadSubmarine->GetName() : TEXT("NULL"),
         DeadController ? *DeadController->GetName() : TEXT("NULL"),
@@ -197,12 +557,22 @@ void ASubmarineGameMode::OnSubmarineDied(ASubmarinePawn* DeadSubmarine,
     //
     //  If FadeOutDuration >= DeathPreviewDelay, fire immediately (t=0).
     // ------------------------------------------------------------------
-    APlayerController* DeadPC = Cast<APlayerController>(DeadController);
-    const float Delay = RS->DeathPreviewDelay;
+    UScreenFadeComponent* PlayerFade = GetPlayerFade(DeadPC);
+    TWeakObjectPtr<APlayerController>    WeakPC(DeadPC);
 
-    if (ScreenFade && DeadPC && ScreenFade->HasFadeEntry("Gameplay") && Delay > 0.f)
+    bool bFadeHUDDarkness = false;
+
+    const float Delay = RS->DeathPreviewDelay;
+    FTimerHandle ContextTimer;
+
+    const bool bDeathIsSplit = ActiveRMS && ActiveRMS->bSplitScreenEnabled && ActiveRMS->LocalPlayerCount >= 2;
+    const EHUDContext DeathCtx = bDeathIsSplit ? EHUDContext::DeathReplay_Splitscreen : EHUDContext::DeathReplay;
+
+    if (PlayerFade && DeadPC && PlayerFade->HasFadeEntry("Gameplay") && Delay > 0.f)
     {
-        const FScreenFadeSettings GameplayFade = ScreenFade->GetFadeEntry("Gameplay");
+        const FScreenFadeSettings GameplayFade = PlayerFade->GetFadeEntry("Gameplay");
+        FTimerHandle FadeTimer;
+
 
         if (GameplayFade.bFadeOut || GameplayFade.bBlackScreenOut)
         {
@@ -211,30 +581,55 @@ void ASubmarineGameMode::OnSubmarineDied(ASubmarinePawn* DeadSubmarine,
             const float BlackScreenTransition = SafeFade.bBlackScreenOut ? SafeFade.BlackScreenOutDuration : 0.f;
             const float TransitionOutDuration = FadeTransition + BlackScreenTransition;
             const float FadeStartTime = Delay - TransitionOutDuration;
+            
+            bFadeHUDDarkness = SafeFade.bFadeOutHUDDarkness;
 
             UE_LOG(LogTemp, Log,
                 TEXT("[GameMode] GameplayFade OUT (%.2fs) scheduled in %.2fs"),
                 GameplayFade.FadeOutDuration, FadeStartTime);
 
-            TWeakObjectPtr<UScreenFadeComponent> WeakFade(ScreenFade);
-            TWeakObjectPtr<APlayerController>    WeakPC(DeadPC);
+            TWeakObjectPtr<UScreenFadeComponent> WeakFade(PlayerFade);
 
             if (FadeStartTime <= 0.f)
             {
-                ScreenFade->FadeOut(DeadPC, SafeFade);
+                PlayerFade->FadeOut(DeadPC, SafeFade);
+                if (WeakPC.IsValid()) {
+                    UHUDTransitionManager* TransMgr = WeakPC->FindComponentByClass<UHUDTransitionManager>();
+                    if (TransMgr)
+                    {
+                        TransMgr->HUDFadeOut(FadeTransition, bFadeHUDDarkness);
+                    }
+                }
             }
             else
             {
-                FTimerHandle FadeTimer;
                 GetWorld()->GetTimerManager().SetTimer(FadeTimer,
-                    FTimerDelegate::CreateLambda([WeakFade, WeakPC, SafeFade]()
+                    FTimerDelegate::CreateLambda([WeakFade, WeakPC, SafeFade, DeathCtx, FadeTransition, bFadeHUDDarkness]()
                         {
-                            if (WeakFade.IsValid() && WeakPC.IsValid())
+                            if (WeakFade.IsValid() && WeakPC.IsValid()) {
+                                UHUDTransitionManager* TransMgr = WeakPC->FindComponentByClass<UHUDTransitionManager>();
+
                                 WeakFade->FadeOut(WeakPC.Get(), SafeFade);
+                                if (TransMgr)
+                                {
+                                    TransMgr->HUDFadeOut(FadeTransition, bFadeHUDDarkness);
+                                }
+                            }
                         }),
                     FadeStartTime, false);
             }
         }
+    }
+    if (WeakPC.IsValid()) {
+        UE_LOG(LogTemp, Log, TEXT("[GameMode] Death HUD: Tansition to Context set -- instant opacity 0 at %.2fs"), Delay);
+        GetWorld()->GetTimerManager().SetTimer(ContextTimer, FTimerDelegate::CreateLambda([WeakPC, DeathCtx]()
+            {
+                UHUDTransitionManager* TransMgr = WeakPC->FindComponentByClass<UHUDTransitionManager>();
+                if (TransMgr) {
+                    TransMgr->SetHUDOpacity(0.f);
+                    TransMgr->TransitionToContext(DeathCtx, nullptr);
+                }
+            }), FMath::Max(Delay, 0.01f), false);
     }
 
     // ------------------------------------------------------------------
@@ -273,6 +668,8 @@ void ASubmarineGameMode::OnPostDeathRecordingComplete()
         UE_LOG(LogTemp, Warning, TEXT("[GameMode] OnPostDeathRecordingComplete — controller gone"));
         return;
     }
+
+    APlayerController* DeadPC = Cast<APlayerController>(DC);
 
     const UReplaySettings* RS = ReplaySettings
         ? ReplaySettings.Get() : GetDefault<UReplaySettings>();
@@ -368,6 +765,9 @@ void ASubmarineGameMode::OnPostDeathRecordingComplete()
             *PendingKillerInfo.ActorGuid.ToString());
     }
 
+    // Start death sequence -- pass the dead player's ScreenFadeComponent
+    UScreenFadeComponent* PlayerFade = GetPlayerFade(DeadPC);
+
 
     if (DeathSequence)
     {
@@ -379,7 +779,7 @@ void ASubmarineGameMode::OnPostDeathRecordingComplete()
             Slice,
             (Slice && ReplayPlayback) ? ReplayPlayback.Get() : nullptr,
             RS->PlaybackSpeed,
-            ScreenFade.Get());
+            PlayerFade);
     }
     else
     {
@@ -418,6 +818,24 @@ void ASubmarineGameMode::OnDeathSequenceComplete()
         return;
     }
 
+    // Save full match replay on player death if enabled
+    if (ReplayRecorder)
+    {
+        const UReplaySettings* RS = ReplaySettings
+            ? ReplaySettings.Get() : GetDefault<UReplaySettings>();
+        if (RS && RS->bSaveFullReplayOnDeath)
+        {
+            const FString Label = FString::Printf(
+                TEXT("Death_%s_%s"),
+                *DeadSub->GetName(),
+                *FDateTime::Now().ToString(TEXT("%Y%m%d_%H%M%S")));
+            const bool bSaved = ReplayRecorder->SaveFullMatchReplay(Label);
+            UE_LOG(LogTemp, Log,
+                TEXT("[GameMode] Full match replay save on death: %s"),
+                bSaved ? TEXT("OK") : TEXT("FAILED"));
+        }
+    }
+
     const UReplaySettings* RS = ReplaySettings
         ? ReplaySettings.Get() : GetDefault<UReplaySettings>();
 
@@ -450,9 +868,45 @@ void ASubmarineGameMode::OnDeathSequenceComplete()
     Spectator->InitSpectator(AllSubs, true);
     if (CameraBlendSettings) Spectator->BlendSettings = CameraBlendSettings;
 
+    // Auto-select a submarine to spectate
+    USpectatorTrackerComponent* Tracker =
+        PC->FindComponentByClass<USpectatorTrackerComponent>();
+    if (Tracker)
+        Tracker->AutoSelectTarget();
+
+    // Transition HUD to Spectator context
+    UHUDTransitionManager* TransMgr = PC
+        ? PC->FindComponentByClass<UHUDTransitionManager>() : nullptr;
+    if (TransMgr)
+    {
+        // Defer one tick so the new widget has geometry before SetHUDOpacity(1.f)
+        TWeakObjectPtr<UHUDTransitionManager> WeakTrans(TransMgr);
+        const bool bSpectIsSplit = ActiveRMS && ActiveRMS->bSplitScreenEnabled && ActiveRMS->LocalPlayerCount >= 2;
+        GetWorld()->GetTimerManager().SetTimerForNextTick([WeakTrans, bSpectIsSplit]()
+            {
+                if (WeakTrans.IsValid())
+                {
+                    const EHUDContext SpectCtx = bSpectIsSplit
+                        ? EHUDContext::Spectator_Splitscreen
+                        : EHUDContext::Spectator;
+                    WeakTrans->TransitionToContext(SpectCtx, nullptr);
+                }
+            });
+        UE_LOG(LogTemp, Log,
+            TEXT("[GameMode] HUD Spectator transition queued (next tick) for PC='%s'"),
+            PC ? *PC->GetName() : TEXT("None"));
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("[GameMode] No HUDTransitionManager on PC='%s' -- HUD context unchanged"),
+            PC ? *PC->GetName() : TEXT("None"));
+    }
+
      //-- Spectator fade-in --------------------------------------------------
 
-    if (ScreenFade && ScreenFade->HasFadeEntry("Spectator"))
+    UScreenFadeComponent* PlayerFade = GetPlayerFade(PC);
+    if (PlayerFade && PlayerFade->HasFadeEntry("Spectator"))
     {
         for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
         {
@@ -460,7 +914,23 @@ void ASubmarineGameMode::OnDeathSequenceComplete()
             {
                 UE_LOG(LogTemp, Log,
                     TEXT("[GameMode] SpectatorFade IN for PC='%s'"), *PC->GetName());
-                ScreenFade->PlayFadeIn(PC, "Spectator");
+                PlayerFade->PlayFadeIn(PC, "Spectator");
+                const FScreenFadeSettings SpectatorFade = PlayerFade->GetFadeEntry("Spectator");
+                float FadeTransition = SpectatorFade.bFadeIn ? SpectatorFade.FadeInDuration : 0.f;
+                float HUDFadeStartTime = SpectatorFade.bBlackScreenIn ? SpectatorFade.BlackScreenInDuration : 0.f;
+                bool bFadeHUDDarkness = SpectatorFade.bFadeInHUDDarkness;
+                if (TransMgr)
+                {
+                    FTimerHandle HUDFadeTimer;
+                    UWorld* W = GetWorld();
+                        W->GetTimerManager().SetTimer(HUDFadeTimer, FTimerDelegate::CreateLambda([TransMgr, FadeTransition, bFadeHUDDarkness, PC]()
+                            {
+                                TransMgr->HUDFadeIn(FadeTransition, bFadeHUDDarkness);
+                                UE_LOG(LogTemp, Log,
+                                    TEXT("[GameMode] SpectatorFade IN for HUD for PC='%s'"), *PC->GetName());
+                            }),
+                            FMath::Max(HUDFadeStartTime, 0.01f), false);
+                }
             }
         }
     }
@@ -471,6 +941,87 @@ void ASubmarineGameMode::OnDeathSequenceComplete()
     PendingDeadController = nullptr;
 
     UE_LOG(LogTemp, Log, TEXT("[GameMode] Spectator spawned, SpectatorFade-in triggered"));
+}
+
+// ---------------------------------------------------------------------------
+//  Replay Mode
+// ---------------------------------------------------------------------------
+void ASubmarineGameMode::EnterReplayMode()
+{
+    UE_LOG(LogTemp, Log, TEXT("[GameMode] EnterReplayMode: showing loading screen..."));
+
+    // Show loading screen first -- same as normal gameplay flow
+    ShowLoadingScreen();
+
+    // LoadGameFromSlot is synchronous, so we wait one tick before loading
+    // so the loading screen has time to render at least one frame
+    GetWorld()->GetTimerManager().SetTimerForNextTick(
+        [this]()
+        {
+            ExecuteReplayLoad();
+        });
+}
+
+void ASubmarineGameMode::ExecuteReplayLoad()
+{
+    USubmarineGameInstance* SGI = Cast<USubmarineGameInstance>(GetGameInstance());
+
+    const bool bLoaded = ReplayRecorder->LoadReplay();
+    if (!bLoaded || !ReplayRecorder->LoadedReplay)
+    {
+        UE_LOG(LogTemp, Error, TEXT("[GameMode] EnterReplayMode: failed to load replay"));
+        HideLoadingScreen();
+        return;
+    }
+
+    UReplayData* FullReplay = ReplayRecorder->LoadedReplay;
+
+    // Respect minimum loading screen time (same as normal flow)
+    const float TimeElapsed = GetWorld()->GetTimeSeconds() - LoadingScreenStartTime;
+    const float RemainingWait = FMath::Max(0.f, MinLoadingScreenTime - TimeElapsed);
+
+    if (RemainingWait > 0.f)
+    {
+        FTimerHandle MinTimeTimer;
+        GetWorld()->GetTimerManager().SetTimer(MinTimeTimer,
+            [this, FullReplay]() { FinishEnterReplayMode(FullReplay); },
+            RemainingWait, false);
+    }
+    else
+    {
+        FinishEnterReplayMode(FullReplay);
+    }
+}
+
+void ASubmarineGameMode::FinishEnterReplayMode(UReplayData* FullReplay)
+{
+    HideLoadingScreen();
+
+    if (ReplayPlayback)
+        ReplayPlayback->BeginPlayback(FullReplay,
+            GetWorld()->GetFirstPlayerController(),
+            FullReplay->RecordStartTime, 1.f);
+
+    for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator();
+        It; ++It)
+    {
+        APlayerController* PC = Cast<APlayerController>(It->Get());
+        if (!PC || !PC->IsLocalPlayerController()) continue;
+
+        UHUDTransitionManager* TransMgr = PC->FindComponentByClass<UHUDTransitionManager>();
+        if (TransMgr)
+        {
+            TransMgr->SetRuntimeSettings(ActiveRMS, HUDGlobalDefaults);
+            TransMgr->TransitionToContext(EHUDContext::Replay, nullptr);
+        }
+
+        USpectatorTrackerComponent* Tracker =
+            PC->FindComponentByClass<USpectatorTrackerComponent>();
+        if (Tracker)
+            Tracker->AutoSelectTarget();
+    }
+
+    UE_LOG(LogTemp, Log, TEXT("[GameMode] EnterReplayMode: replay started"));
 }
 
 // ---------------------------------------------------------------------------

@@ -3,9 +3,10 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "Replay/ReplaySettings.h"
-//#include "Delegates/Delegate.h"
 #include "ScreenFadeComponent.generated.h"
 
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnFadeAlphaChanged, float, Alpha);
 
 /**
  * UScreenFadeComponent
@@ -138,6 +139,11 @@ public:
 
     UFUNCTION(BlueprintPure, Category = "ScreenFade|Library")
     bool HasFadeEntry(FName Key) const;
+
+    // Broadcast every tick while fading, and at fade start/end
+    // Alpha: 0=visible, 1=black (matches ClientSetCameraFade convention)
+    UPROPERTY(BlueprintAssignable, Category = "ScreenFade")
+    FOnFadeAlphaChanged OnFadeAlphaChanged;   // DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam
 
     // -----------------------------------------------------------------------
     //  Runtime library (readable from Blueprint)

@@ -4,7 +4,43 @@
 #include "GameFramework/SaveGame.h"
 #include "Engine/DataAsset.h"
 #include "NiagaraSystem.h"
+#include "TorpedoCharacteristics.h"
 #include "ReplayData.generated.h"
+
+// ---------------------------------------------------------------------------
+//  FReplayActorMeta
+//
+//  Static identity data for one tracked actor. Recorded ONCE when the actor
+//  is first seen. Never changes during a match.
+//  Stored in UReplayData::GuidToMeta.
+//
+//  Used by:
+//   - InfoBillboard during replay (replaces live ITrackableSubmarine reads)
+//   - Spectator UI (team roster, kills feed)
+//   - ReplayPlayback (ghost labeling)
+// ---------------------------------------------------------------------------
+USTRUCT(BlueprintType)
+struct FReplayActorMeta
+{
+    GENERATED_BODY()
+
+    // -- Common --
+    UPROPERTY() FString  DisplayName;
+    UPROPERTY() int32    TeamIndex = 0;
+    UPROPERTY() FString  TeamName;
+    UPROPERTY() FString  FactionName;
+    UPROPERTY() FLinearColor TeamColor = FLinearColor::White;
+    UPROPERTY() bool     bIsCPU = false;
+    UPROPERTY() int32    Level = 1;
+    UPROPERTY() bool     bIsTorpedo = false;
+
+    // -- Torpedo-specific (only valid when bIsTorpedo = true) --
+    UPROPERTY() ETorpedoType TorpedoType = ETorpedoType::Normal;
+    UPROPERTY() float AttackDamage = 0.f;
+    UPROPERTY() float MaxLifetime = 0.f;
+    UPROPERTY() FString OwnerDisplayName; // display name of the firing submarine
+    UPROPERTY() FGuid   OwnerGuid;        // GUID of the firing submarine
+};
 
 // ---------------------------------------------------------------------------
 //  Per-actor lightweight tick frame  (recorded every 1/RecordTickRate seconds)
@@ -46,6 +82,10 @@ struct FReplayActorFrame
     UPROPERTY()
     int32 SpecialTorpedoes = 0;
 
+    // Dynamic InfoBillboard data -- updated every frame
+    UPROPERTY() float    FireCooldownRatio = 1.f;   // 0=cooldown, 1=ready
+    UPROPERTY() float    ReloadRatio = 1.f;
+
     /**
      * Always true while the actor exists in TActorIterator.
      * For submarines: false when health reaches 0.
@@ -74,6 +114,8 @@ struct FReplayActorSnapshot
     UPROPERTY() float    Health = 0.f;
     UPROPERTY() int32    NormalTorpedoes = 0;
     UPROPERTY() int32    SpecialTorpedoes = 0;
+    UPROPERTY() float    FireCooldownRatio = 1.f;
+    UPROPERTY() float    ReloadRatio = 1.f;
     UPROPERTY() bool     bAlive = true;
 };
 
@@ -139,7 +181,53 @@ struct FReplayVFXEvent
 };
 
 // ---------------------------------------------------------------------------
-//  The SaveGame object that holds the entire recording
+//  Team snapshot -- one entry per team, updated each keyframe.
+//  Used by spectator/replay UI to show team rosters and kill feeds.
+// ---------------------------------------------------------------------------
+USTRUCT(BlueprintType)
+struct FReplayTeamEntry
+{
+    GENERATED_BODY()
+
+    UPROPERTY() int32    TeamIndex = 0;
+    UPROPERTY() FString  TeamName;
+    UPROPERTY() FLinearColor TeamColor = FLinearColor::White;
+    UPROPERTY() FString  FactionName;
+
+    /** GUIDs of all submarines belonging to this team (alive or dead). */
+    UPROPERTY() TArray<FGuid> SubmarineGuids;
+};
+
+// ---------------------------------------------------------------------------
+//  Match event -- discrete events (kill, torpedo fired, etc.)
+//  Stored in UReplayData::MatchEvents, sorted by timestamp.
+//  Future use: kill feed UI, match timeline scrubbing.
+// ---------------------------------------------------------------------------
+UENUM(BlueprintType)
+enum class EReplayMatchEventType : uint8
+{
+    SubmarineDied,
+    TorpedoFired,
+    TorpedoImpact,
+    RadarScan,
+    MatchStart,
+    MatchEnd
+};
+
+USTRUCT(BlueprintType)
+struct FReplayMatchEvent
+{
+    GENERATED_BODY()
+
+    UPROPERTY() float                 Timestamp = 0.f;
+    UPROPERTY() EReplayMatchEventType EventType = EReplayMatchEventType::SubmarineDied;
+    UPROPERTY() FGuid                 ActorGuid;        // primary actor (victim, torpedo, etc.)
+    UPROPERTY() FGuid                 InstigatorGuid;   // killer, firer, etc.
+    UPROPERTY() FString               Description;      // human-readable for debug
+};
+
+// ---------------------------------------------------------------------------
+//  UReplayData (The SaveGame object that holds the entire recording)
 // ---------------------------------------------------------------------------
 UCLASS(BlueprintType)
 class SUBMARINEPROJECT_API UReplayData : public USaveGame
@@ -171,6 +259,16 @@ public:
     // -----------------------------------------------------------------------
     UPROPERTY() TMap<FGuid, FString> GuidToDisplayName;
 
+    /**
+     * Full actor metadata per GUID.
+     * Populated when the recorder first sees each actor.
+     * Used by InfoBillboard during replay and spectator UI.
+     */
+    UPROPERTY() TMap<FGuid, FReplayActorMeta> GuidToMeta;
+
+    // -- Team info (set once at match start) --
+    UPROPERTY() TArray<FReplayTeamEntry> Teams;
+
     // -----------------------------------------------------------------------
     //  Recording data
     // -----------------------------------------------------------------------
@@ -196,6 +294,9 @@ public:
      */
     UPROPERTY() TArray<FReplayVFXEvent> VFXEvents;
 
+    // -- Match events (discrete, for kill feed / timeline) --
+    UPROPERTY() TArray<FReplayMatchEvent> MatchEvents;
+
     // -----------------------------------------------------------------------
     //  Helpers
     // -----------------------------------------------------------------------
@@ -207,8 +308,28 @@ public:
     /** Display name for a GUID, or "Unknown" if not registered. */
     FString GetDisplayName(const FGuid& Guid) const
     {
-        const FString* Found = GuidToDisplayName.Find(Guid);
-        return Found ? *Found : FString(TEXT("Unknown"));
+        const FReplayActorMeta* Meta = GuidToMeta.Find(Guid);
+        if (Meta) return Meta->DisplayName;
+        const FString* Legacy = GuidToDisplayName.Find(Guid);
+        return Legacy ? *Legacy : FString(TEXT("Unknown"));
+    }
+
+    const FReplayActorMeta* GetMeta(const FGuid& Guid) const
+    {
+        return GuidToMeta.Find(Guid);
+    }
+
+    void RecordMatchEvent(float Time, EReplayMatchEventType Type,
+        const FGuid& Actor, const FGuid& Instigator = FGuid(),
+        const FString& Desc = FString())
+    {
+        FReplayMatchEvent Ev;
+        Ev.Timestamp = Time;
+        Ev.EventType = Type;
+        Ev.ActorGuid = Actor;
+        Ev.InstigatorGuid = Instigator;
+        Ev.Description = Desc;
+        MatchEvents.Add(Ev);
     }
 
     /**

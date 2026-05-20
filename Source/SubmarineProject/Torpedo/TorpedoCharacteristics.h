@@ -14,7 +14,9 @@ enum class ETorpedoType : uint8
 {
     Light,   // Fast, low damage, low drag
     Normal,  // Balanced
-    Heavy    // Slow, high damage, high drag
+    Heavy,   // Slow, high damage, high drag
+    Seeker,  // Very Slow, high damage, automatic
+    Radio,   // Slow, medium damage, full control
 };
 
 UCLASS(BlueprintType)

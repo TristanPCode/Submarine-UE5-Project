@@ -391,6 +391,7 @@ void UScreenFadeComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 
     // Log alpha every frame while a fade is in progress
     APlayerCameraManager* CamMgr = PC->PlayerCameraManager;
+    OnFadeAlphaChanged.Broadcast(CamMgr->FadeAmount);
     FadeMonitorTimer += DeltaTime;
 
     if (ShouldLog() && FadeMonitorTimer >= 0.05f)   // ~20 Hz -- enough to see the curve
@@ -405,22 +406,22 @@ void UScreenFadeComponent::TickComponent(float DeltaTime, ELevelTick TickType,
                 CamMgr->bEnableFading ? 1 : 0,
                 CamMgr->FadeAmount);
         }
-
-        // Stop monitoring when fade settles.
-        // FadeAmount=0 = screen CLEAR (fade-in complete).
-        // FadeAmount=1 = screen BLACK (fade-out complete or snap-to-black).
-        if (!CamMgr->bEnableFading || CamMgr->FadeAmount <= 0.001f || CamMgr->FadeAmount >= 0.999f)
-        {
-            const bool bIsBlack = CamMgr->FadeAmount >= 0.999f;
-            if (ShouldLog()) {
-                UE_LOG(LogTemp, Log,
-                    TEXT("[ScreenFade] Fade settled  alpha=%.4f  screen=%s -- monitoring stopped"),
-                    CamMgr->FadeAmount,
-                    bIsBlack ? TEXT("BLACK") : TEXT("CLEAR"));
-            }
-            bFadeMonitorActive = false;
-        }
     }
+    // Stop monitoring when fade settles.
+    // FadeAmount=0 = screen CLEAR (fade-in complete).
+    // FadeAmount=1 = screen BLACK (fade-out complete or snap-to-black).
+    if (!CamMgr->bEnableFading || CamMgr->FadeAmount <= 0.001f || CamMgr->FadeAmount >= 0.999f)
+    {
+        const bool bIsBlack = CamMgr->FadeAmount >= 0.999f;
+        if (ShouldLog()) {
+            UE_LOG(LogTemp, Log,
+                TEXT("[ScreenFade] Fade settled  alpha=%.4f  screen=%s -- monitoring stopped"),
+                CamMgr->FadeAmount,
+                bIsBlack ? TEXT("BLACK") : TEXT("CLEAR"));
+        }
+        bFadeMonitorActive = false;
+    }
+    
 }
 
 // ---------------------------------------------------------------------------
@@ -443,6 +444,9 @@ void UScreenFadeComponent::Internal_SnapToBlack(APlayerController* PC, const FLi
         true,
         true   // hold black
     );
+
+    // Also broadcast for snap-to-black (instant alpha=1)
+    OnFadeAlphaChanged.Broadcast(1.f);
 }
 
 // ---------------------------------------------------------------------------

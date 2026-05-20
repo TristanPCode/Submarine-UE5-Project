@@ -75,6 +75,13 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Replay")
     bool LoadReplay();
 
+    /**
+     * Save the full LiveReplay buffer (entire match) to a separate slot.
+     * Called automatically on player death if bSaveFullReplayOnDeath = true.
+     */
+    UFUNCTION(BlueprintCallable, Category = "Replay")
+    bool SaveFullMatchReplay(const FString& Label = TEXT(""));
+
     // -----------------------------------------------------------------------
     //  Data access
     // -----------------------------------------------------------------------

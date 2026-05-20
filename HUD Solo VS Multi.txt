@@ -1,0 +1,4 @@
+HUD Solo VS Multi:
+Health Bar -> *0.9
+Engine/Pitch + Speedometer/Depthometer + Normal/Special Ammo -> *0.8
+Radar -> *0.8
