@@ -1157,6 +1157,8 @@ void ASubmarinePawn::OnTurnLeftReleased(const FInputActionValue&)
 void ASubmarinePawn::OnMouseX(const FInputActionValue& Value)
 {
     const float Axis = Value.Get<float>();
+    // Deadzone: ignore tiny inputs to prevent camera drift at rest
+    if (FMath::Abs(Axis) < 0.1f) return;
     const USubmarineCharacteristics* Stats = GetStats();
 
     if (CameraState == ESubmarineCameraState::Periscope)
@@ -1179,6 +1181,8 @@ void ASubmarinePawn::OnMouseX(const FInputActionValue& Value)
 void ASubmarinePawn::OnMouseY(const FInputActionValue& Value)
 {
     const float Axis = Value.Get<float>();
+    // Deadzone: ignore tiny inputs to prevent camera drift at rest
+    if (FMath::Abs(Axis) < 0.1f) return;
     const USubmarineCharacteristics* Stats = GetStats();
 
     if (CameraState == ESubmarineCameraState::ThirdPerson)
@@ -1214,7 +1218,12 @@ void ASubmarinePawn::OnScrollZoom(const FInputActionValue& Value)
             const URadarSettings* RS = RadarHandler->Settings
                 ? RadarHandler->Settings.Get()
                 : GetDefault<URadarSettings>();
-            RadarHandler->IncrementZoom(ScrollDelta * (RS ? RS->ZoomStep : 0.2f));
+            const USubmarineCharacteristics* Stats = GetStats();
+            const float ScrollSpeedMultiplier = bUsesGamepad
+                ? Stats->PeriscopeScrollSpeedMultiplier_Gamepad
+                : Stats->PeriscopeScrollSpeedMultiplier;
+            
+            RadarHandler->IncrementZoom(ScrollDelta * ScrollSpeedMultiplier * (RS ? RS->ZoomStep : 0.2f));
 
             if (PeriscopeCamera)
             {

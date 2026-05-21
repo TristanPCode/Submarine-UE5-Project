@@ -12,6 +12,7 @@
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
 #include "EngineUtils.h"
+#include "Submarine/SubmarinePawn.h"
 
 #define BB_LOG(fmt, ...) \
     if (DebugSettings && DebugSettings->bLogBillboard) \
@@ -41,29 +42,156 @@ void UBillboardDisplayComponent::SetBillboardContext(
     UInfoBillboardContextSettings* Context,
     int32 InLocalTeamIndex, URuntimeMatchSettings* InMatchSettings)
 {
+    // Always log -- critical path for debugging stuck billboards
+    UE_LOG(LogTemp, Log,
+        TEXT("[BBCtx] SetBillboardContext CALLED: PC='%s'  "
+            "OldCtx=%s  NewCtx=%s  Team=%d  OldEntries=%d"),
+        GetPC() ? *GetPC()->GetName() : TEXT("?"),
+        BillboardCtx ? *BillboardCtx->GetName() : TEXT("NULL"),
+        Context ? *Context->GetName() : TEXT("NULL"),
+        InLocalTeamIndex,
+        Entries.Num());
+
     BillboardCtx = Context;
     LocalTeamIndex = InLocalTeamIndex;
     MatchSettings = InMatchSettings;
     RebuildEntries();
-    BB_LOG("[BBDisplay] SetBillboardContext: PC='%s'  Ctx=%s  Team=%d  Entries=%d",
+    UE_LOG(LogTemp, Log,
+        TEXT("[BBCtx] After RebuildEntries: PC='%s'  Ctx=%s  NewEntries=%d  PoolSize=%d"),
         GetPC() ? *GetPC()->GetName() : TEXT("?"),
         Context ? *Context->GetName() : TEXT("NULL"),
-        LocalTeamIndex,
+        Entries.Num(),
+        WidgetPool.Num());
+
+    // If context is null (e.g. no billboards for this HUD state),
+    // collapse all existing widgets immediately.
+    if (!Context)
+    {
+        for (FBillboardEntry& E : Entries)
+        {
+            if (IsValid(E.Widget))
+            {
+                E.Widget->SetVisibility(ESlateVisibility::Collapsed);
+                if (E.Widget->IsInViewport())
+                    E.Widget->RemoveFromParent();
+                WidgetPool.Add(E.Widget);
+                TrackedWidgets.Remove(E.Widget);
+                E.Widget = nullptr;
+            }
+        }
+        Entries.Empty();
+    }
+}
+
+void UBillboardDisplayComponent::SetBillboardContextWithSources(
+    UInfoBillboardContextSettings* Context,
+    int32 InLocalTeamIndex,
+    URuntimeMatchSettings* InMatchSettings,
+    const TArray<USubmarineInfoBillboardComponent*>& KnownSources)
+{
+    BillboardCtx = Context;
+    LocalTeamIndex = InLocalTeamIndex;
+    MatchSettings = InMatchSettings;
+
+    // Release existing entries back to pool (same as RebuildEntries)
+    for (FBillboardEntry& E : Entries)
+    {
+        if (!IsValid(E.Widget)) continue;
+        E.Widget->SetVisibility(ESlateVisibility::Collapsed);
+        if (E.Widget->IsInViewport()) E.Widget->RemoveFromParent();
+        WidgetPool.Add(E.Widget);
+        TrackedWidgets.Remove(E.Widget);
+    }
+    Entries.Empty();
+
+    if (!Context) return;
+
+    APlayerController* PC = GetPC();
+
+    for (USubmarineInfoBillboardComponent* BBC : KnownSources)
+    {
+        if (!BBC || !IsValid(BBC)) continue;
+
+        // Skip dead subs
+        if (const ASubmarinePawn* SP = Cast<ASubmarinePawn>(BBC->GetOwner()))
+            if (SP->bDead) continue;
+
+        const EBillboardRelationship Rel =
+            BBC->ComputeRelationshipForPC(LocalTeamIndex, PC);
+        UInfoBillboardSettings* Settings = Context->GetSettings(Rel);
+
+        FBillboardEntry Entry;
+        Entry.Source = BBC;
+        Entry.bVisible = Settings && Settings->bVisible;
+
+        if (Entry.bVisible && PC)
+        {
+            UInfoBillboardWidget* W = AcquireWidget();
+            if (W)
+            {
+                Entry.Widget = W;
+                TrackedWidgets.Add(W);
+                W->SetRenderTranslation(FVector2D::ZeroVector);
+
+                const FString Text = BBC->GetEvaluatedText(Settings->TextTemplate);
+                W->ApplySettings(Settings, Text);
+                W->AddToPlayerScreen(Settings->BillboardZOrder);
+                if (Settings->bOverrideDrawSize && !Settings->BackgroundSize.IsNearlyZero())
+                    W->SetDesiredSizeInViewport(Settings->BackgroundSize);
+                if (Settings->bUseTeamColor)
+                {
+                    FLinearColor TeamColor = FLinearColor::White;
+                    if (MatchSettings)
+                        TeamColor = MatchSettings->GetTeamSettings(BBC->EntityTeamIndex).TeamColor;
+                    W->OverrideTextColor(TeamColor);
+                }
+                W->SetVisibility(ESlateVisibility::HitTestInvisible);
+                Entry.CachedSettings = Settings;
+            }
+        }
+
+        Entries.Add(Entry);
+    }
+
+    UE_LOG(LogTemp, Log,
+        TEXT("[BBDisplay] SetBillboardContextWithSources: PC='%s' Ctx=%s Sources=%d Entries=%d"),
+        PC ? *PC->GetName() : TEXT("?"),
+        *Context->GetName(),
+        KnownSources.Num(),
         Entries.Num());
 }
 
 void UBillboardDisplayComponent::RebuildEntries()
 {
-    // Release all existing widgets back to pool
+    UE_LOG(LogTemp, Log,
+        TEXT("[BBCtx] RebuildEntries: PC='%s'  Ctx=%s  "
+            "ReleasingEntries=%d  PoolBefore=%d"),
+        GetPC() ? *GetPC()->GetName() : TEXT("?"),
+        BillboardCtx ? *BillboardCtx->GetName() : TEXT("NULL"),
+        Entries.Num(),
+        WidgetPool.Num());
+
+    // Release all existing widgets back to pool.
+    // IsInViewport() guard prevents crash when the owning player
+    // has been cleaned up but the widget object is still IsValid().
     for (FBillboardEntry& E : Entries)
-        if (IsValid(E.Widget))
-        {
-            E.Widget->SetVisibility(ESlateVisibility::Collapsed);
-            WidgetPool.Add(E.Widget);
-        }
+    {
+        if (!IsValid(E.Widget)) continue;
+        E.Widget->SetVisibility(ESlateVisibility::Collapsed);
+        if (E.Widget->IsInViewport())
+            E.Widget->RemoveFromParent();
+        WidgetPool.Add(E.Widget);
+        TrackedWidgets.Remove(E.Widget);
+    }
     Entries.Empty();
 
-    if (!GetWorld() || !BillboardCtx) return;
+    if (!GetWorld() || !BillboardCtx)
+    {
+        UE_LOG(LogTemp, Log,
+            TEXT("[BBCtx] RebuildEntries: early exit (null ctx or world) -- "
+                "all widgets collapsed"));
+        return;
+    }
 
     // Find all billboard components in the world
     for (TActorIterator<AActor> It(GetWorld()); It; ++It)
@@ -78,6 +206,18 @@ void UBillboardDisplayComponent::RebuildEntries()
             BBC->ComputeRelationshipForPC(LocalTeamIndex, PC);
         UInfoBillboardSettings* Settings = BillboardCtx->GetSettings(Rel);
 
+        // Skip dead submarines -- no widget should ever be created for them
+        if (const ASubmarinePawn* SubPawn =
+            Cast<ASubmarinePawn>(BBC->GetOwner()))
+        {
+            if (SubPawn->bDead)
+            {
+                BB_LOG("[BBCtx] RebuildEntries: skipping dead sub '%s'",
+                    *BBC->EntityDisplayName);
+                continue;
+            }
+        }
+
         FBillboardEntry Entry;
         Entry.Source = BBC;
         Entry.bVisible = Settings && Settings->bVisible;
@@ -89,6 +229,12 @@ void UBillboardDisplayComponent::RebuildEntries()
             if (W)
             {
                 Entry.Widget = W;
+                TrackedWidgets.Add(W);
+                W->SetRenderTranslation(FVector2D::ZeroVector);
+
+                const FString Text = BBC->GetEvaluatedText(Settings->TextTemplate);
+                W->ApplySettings(Settings, Text);
+
                 if (PC)
                 {
                     // ZOrder
@@ -99,8 +245,6 @@ void UBillboardDisplayComponent::RebuildEntries()
                     if (Settings->bOverrideDrawSize && !Settings->BackgroundSize.IsNearlyZero())
                         W->SetDesiredSizeInViewport(Settings->BackgroundSize);
                 }
-                const FString Text = BBC->GetEvaluatedText(Settings->TextTemplate);
-                W->ApplySettings(Settings, Text);
                 if (Settings->bUseTeamColor)
                 {
                     FLinearColor TeamColor = FLinearColor::White;
@@ -176,7 +320,26 @@ void UBillboardDisplayComponent::TickComponent(float DeltaTime, ELevelTick TickT
     Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
     APlayerController* PC = GetPC();
-    if (!PC || !BillboardCtx) return;
+    if (!PC || !BillboardCtx)
+    {
+        // Context is null -- collapse ALL widgets immediately to prevent stuck billboards
+        if (!BillboardCtx)
+        {
+            for (FBillboardEntry& E : Entries) {
+                if (IsValid(E.Widget) &&
+                    E.Widget->GetVisibility() != ESlateVisibility::Collapsed)
+                {
+                    E.Widget->SetVisibility(ESlateVisibility::Collapsed);
+                    if (E.Widget->IsInViewport()) E.Widget->RemoveFromParent();
+                    WidgetPool.Add(E.Widget);
+                    TrackedWidgets.Remove(E.Widget);
+                    E.Widget = nullptr;
+                }
+            }
+            Entries.Empty();
+        }
+        return;
+    }
 
     // Slow logic: recompute relationships and update text at 10Hz
     LogicAccumulator += DeltaTime;
@@ -185,17 +348,54 @@ void UBillboardDisplayComponent::TickComponent(float DeltaTime, ELevelTick TickT
 
     for (FBillboardEntry& E : Entries)
     {
-        if (!E.Source.IsValid() || !IsValid(E.Widget)) continue;
+        if (!E.Source.IsValid())
+        {
+            if (IsValid(E.Widget))
+            {
+                E.Widget->SetVisibility(ESlateVisibility::Collapsed);
+                if (E.Widget->IsInViewport()) E.Widget->RemoveFromParent();
+                WidgetPool.Add(E.Widget);
+                TrackedWidgets.Remove(E.Widget);  // remove from GC root before nulling
+                E.Widget = nullptr;
+            }
+            continue;
+        }
+        if (!IsValid(E.Widget)) continue;
 
         USubmarineInfoBillboardComponent* BBC = E.Source.Get();
 
         if (bDoLogic)
         {
+            // Check dead state first -- overrides everything
+            // This catches CPU deaths which skip the death sequence entirely
+            AActor* LogicOwner = BBC->GetOwner();
+            if (const ASubmarinePawn* SP = Cast<ASubmarinePawn>(LogicOwner))
+            {
+                if (SP->bDead)
+                {
+                    if (E.bVisible)
+                        UE_LOG(LogTemp, Log,
+                            TEXT("[BBCtx] Logic: hiding dead sub '%s' (bDead=true)"),
+                            *BBC->EntityDisplayName);
+                    E.bVisible = false;
+                    E.CachedSettings = nullptr;
+                    continue;  // skip expensive relationship recompute
+                }
+            }
+
             // Recompute relationship (pawn may have changed, e.g. death)
             const EBillboardRelationship Rel =
                 BBC->ComputeRelationshipForPC(LocalTeamIndex, PC);
             UInfoBillboardSettings* Settings = BillboardCtx->GetSettings(Rel);
-            E.bVisible = Settings && Settings->bVisible && BBC->CheckIdentificationGateForPC(PC);
+            // CheckIdentificationGateForPC requires the PC to have a pawn with
+            // radar detection entries. In Spectator/DeathReplay the PC has no pawn
+            // so the gate always returns false, hiding all billboards.
+            // bIgnoreIdentificationGate on the settings DA bypasses this.
+            const bool bGatePassed = !Settings
+                ? false
+                : (Settings->bIgnoreIdentificationGate
+                    || BBC->CheckIdentificationGateForPC(PC));
+            E.bVisible = Settings && Settings->bVisible && bGatePassed;
             E.CachedSettings = Settings;  // cache for fast tick
 
             if (E.bVisible && Settings)
@@ -217,7 +417,45 @@ void UBillboardDisplayComponent::TickComponent(float DeltaTime, ELevelTick TickT
 
         // Fast tick: project world position every frame for smooth movement
         AActor* Owner = BBC->GetOwner();
-        if (!Owner) { E.Widget->SetVisibility(ESlateVisibility::Collapsed); continue; }
+        if (!Owner) {
+            if (E.Widget->GetVisibility() != ESlateVisibility::Collapsed)
+            {
+                E.Widget->SetVisibility(ESlateVisibility::Collapsed);
+                if (E.Widget->IsInViewport()) E.Widget->RemoveFromParent();
+            }
+            continue;
+        }
+
+        // Fast-tick safety: catch dead submarines between logic ticks
+        if (const ASubmarinePawn* SubPawn = Cast<ASubmarinePawn>(Owner))
+            if (SubPawn->bDead)
+            {
+                if (E.Widget->GetVisibility() != ESlateVisibility::Collapsed)
+                {
+                    E.Widget->SetVisibility(ESlateVisibility::Collapsed);
+                    if (E.Widget->IsInViewport()) E.Widget->RemoveFromParent();
+                }
+                continue;
+            }
+
+        // Hide billboard if the submarine is dead (frozen post-death).
+        // bDead is set by FreezeOnDeath() before the death sequence starts.
+        if (const ASubmarinePawn* SubPawn = Cast<ASubmarinePawn>(Owner))
+        {
+            if (SubPawn->bDead)
+            {
+                if (E.Widget->GetVisibility() != ESlateVisibility::Collapsed)
+                {
+                    UE_LOG(LogTemp, Log,
+                        TEXT("[BBCtx] COLLAPSING dead pawn billboard: Entity='%s'  PC='%s'"),
+                        *BBC->EntityDisplayName,
+                        GetPC() ? *GetPC()->GetName() : TEXT("?"));
+                    E.Widget->SetVisibility(ESlateVisibility::Collapsed);
+                    if (E.Widget->IsInViewport()) E.Widget->RemoveFromParent();
+                }
+                continue;
+            }
+        }
 
         // WorldOffset is in world space -- adding it before projection
         // means it scales correctly with distance (shrinks when far away).
@@ -281,6 +519,16 @@ void UBillboardDisplayComponent::TickComponent(float DeltaTime, ELevelTick TickT
                     WSize.X, WSize.Y,
                     FinalPos.X, FinalPos.Y);
             }
+        }
+    }
+
+    // Purge entries whose source has been destroyed
+    for (int32 i = Entries.Num() - 1; i >= 0; --i)
+    {
+        FBillboardEntry& E = Entries[i];
+        if (!E.Source.IsValid() && !IsValid(E.Widget))
+        {
+            Entries.RemoveAt(i);
         }
     }
 

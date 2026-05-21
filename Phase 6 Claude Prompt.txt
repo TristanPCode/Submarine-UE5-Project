@@ -1,0 +1,444 @@
+We are starting PHASE 6 of SubmarineProject (UE5.7 C++), focused on Ocean Systems, Underwater Rendering, Water Physics and Visual Effects.
+
+Before coding, I want you to:
+
+1. Analyze the current architecture
+2. Validate compatibility with the upcoming water/rendering systems
+3. Identify risky areas early
+4. Propose the exact architecture for STEP 6.1 only
+5. Ask any critical questions before implementation
+
+VERY IMPORTANT:
+This project is NOT using UE5 Water Plugin for gameplay physics.
+The water system is custom and gameplay-driven.
+Visual water can use UE5 rendering features if useful, but gameplay authority must remain in our own systems.
+
+====================================================
+CURRENT PROJECT SUMMARY
+=======================
+
+Project:
+
+* UE5.7
+* C++ first, Blueprint integration
+* Local split-screen multiplayer (2 players)
+* CPU submarines
+* Heavy modular architecture
+
+Main gameplay:
+
+* Submarine combat
+* Replay system
+* Spectator system
+* Modular HUD
+* Radar detection
+* Local multiplayer split-screen
+
+====================================================
+CURRENT GAMEPLAY / ARCHITECTURE
+===============================
+
+Core Pawn:
+ASubmarinePawn
+
+* Uses custom USubmarinePhysicsComponent
+* 6DOF movement
+* Pitch interpolation already exists
+* Uses ITrackableSubmarine
+* Has radar + torpedo systems
+* Uses different sensitivity profiles for keyboard/gamepad
+
+Current movement issue:
+
+* Current pitch affects vertical motion too directly
+* Near surface behavior feels unrealistic
+* Submarine can “fly” upward too easily
+
+Future goal:
+
+* Separate:
+  CommandPitch
+  DesiredPitch
+  ActualPitch
+* Real inertia/heaviness
+* Buoyancy-based vertical movement
+
+For now the Physics work well and are consistent with underwater Physics. There's no real water for now.
+Even in the Physics component, it just checks if we are above/under a certain height in our world.
+The goal is to remove that and have a clean water visualisation and physics application.
+
+====================================================
+HUD / MULTIPLAYER
+=================
+
+Current local multiplayer architecture already works:
+
+* Split-screen left/right
+* Per-player HUD
+* Per-player fade
+* Per-player billboard system
+* Keyboard/gamepad partitioning via custom ViewportClient
+* Independent HUD transitions
+
+No online multiplayer for now.
+BUT:
+Future online compatibility matters.
+We want architecture choices that scale correctly later.
+
+====================================================
+PHASE 6 GOALS
+=============
+
+We are starting the “Water + Rendering” phase.
+
+Main goals:
+
+* Stylized but believable ocean
+* Underwater immersion
+* Strong portfolio-level rendering
+* GPU-friendly architecture
+* Gameplay ↔ rendering interaction
+* Scalable system
+* Editor visualization tools
+* Region-based water behavior
+
+====================================================
+IMPORTANT DESIGN REQUIREMENTS
+=============================
+
+1. WATER HEIGHT AND WATER AGITATION ARE SEPARATE SYSTEMS
+
+We do NOT want a single “wave height”.
+
+We want:
+
+* average water height
+* agitation intensity
+* turbulence
+  all separated.
+
+The current idea:
+RGBA texture channels:
+
+R = average water height
+G = agitation intensity
+B = turbidity / underwater visibility
+A = reserved for future use
+
+Question:
+Is this the best architecture?
+Or should some data be generated procedurally instead?
+
+====================================================
+2) REGIONAL WATER SYSTEM
+========================
+
+We want:
+
+* different sea regions
+* different wave intensity
+* different average water heights
+* different fog/turbidity/color
+* future weather compatibility
+
+Example:
+calm zone
+storm zone
+foggy zone
+deep dark zone
+
+Question:
+What is the best scalable UE5 architecture for this?
+
+Possibilities considered:
+
+* texture-based world sampling
+* grid/chunk regions
+* spline volumes
+* hybrid system
+
+====================================================
+3) EDITOR PREVIEW TOOLS
+=======================
+
+We NEED editor visualization.
+
+Requirements:
+
+* preview average water height
+* preview agitation
+* preview turbidity
+* preview final water rendering
+
+Must be toggleable.
+
+Potential idea:
+AWaterPreviewActor with:
+
+* bPreviewWater
+* bPreviewDebug
+* preview modes
+
+Question:
+What is the cleanest UE5 workflow for this?
+
+====================================================
+4) WATER SURFACE VISUALS
+========================
+
+We want:
+
+* stylized cinematic water
+* Fresnel
+* foam
+* translucency
+* animated normals
+* dynamic perturbations
+* submarine wakes
+* torpedo disturbances
+
+But:
+performance matters.
+
+Question:
+What should be:
+
+* material-driven
+* Niagara-driven
+* CPU-driven
+* render-target-driven
+
+====================================================
+5) UNDERWATER RENDERING
+=======================
+
+Planned:
+
+* Exponential Height Fog
+* dynamic underwater PostProcess
+* spectral absorption
+* underwater distortion
+* volumetric lighting
+* suspended particles
+* caustics
+
+But:
+we still need gameplay readability.
+Submarines must remain visible at reasonable distances.
+
+Question:
+What should be global?
+What should be camera-local?
+What should be post-process only?
+
+====================================================
+6) GAMEPLAY ↔ WATER INTERACTION
+===============================
+
+We want:
+
+* near-surface speed boost
+* agitation slightly affecting physics
+* wake generation
+* torpedo disturbances
+* buoyancy stabilization near surface
+
+BUT:
+gameplay must remain controllable and competitive.
+
+Question:
+Which interactions should remain cosmetic only?
+Which should truly affect gameplay physics?
+
+====================================================
+7) PERFORMANCE REQUIREMENTS
+===========================
+
+We want:
+
+* scalable GPU cost
+* scalable CPU cost
+* future compatibility with larger maps
+* local split-screen compatibility
+* future online compatibility
+
+Question:
+What should be:
+
+* sampled every tick
+* cached
+* async updated
+* GPU sampled only
+
+====================================================
+8) UE5 FEATURES
+===============
+
+We are open to:
+
+* Niagara
+* Material Parameter Collections
+* Runtime Virtual Textures
+* Scene Capture
+* Render Targets
+* Volumetric Fog
+* Lumen-compatible solutions
+
+BUT:
+we do NOT want:
+
+* extremely fragile architecture
+* full dependence on Water Plugin gameplay systems
+
+====================================================
+9) PHASE 6 IMPLEMENTATION STRATEGY
+==================================
+
+We do NOT want giant implementation jumps.
+
+We want:
+small,
+clean,
+incremental steps.
+
+Current intended roadmap:
+
+6.1 Ocean Global Architecture
+6.2 Ocean Surface Visuals
+6.3 Gameplay ↔ Surface Interaction
+6.4 Underwater Rendering
+6.5 Caustics & Lighting
+6.6 Advanced Submarine Physics
+6.7 Portfolio Effects
+6.8 Optimization & Scalability
+6.9 Final Polish
+
+====================================================
+10) MY FILES ARCHITECTURE
+==================================
+Here are all the folder with all the files I currently have:
+BillBoard:
+- BillboardDisplayComponent.h/.cpp
+- InfoBillboardContextSettings.h
+- InfoBillboardSettings.h
+- InfoBillboardWidget.h/.cpp
+- SubmarineInfoBillboardComponent.h/.cpp
+
+CameraEdit:
+- CameraBlendSettings.h
+- ScreenFadeComponent.h/.cpp
+
+Controller:
+- SubmarinePlayerController.h/.cpp
+- SubmarineViewportClient.h/.cpp
+
+CPU:
+- SubmarineCPUController.h/.cpp
+
+Death:
+- DeathSequenceComponent.h/.cpp
+
+Game:
+- SubmarineGameInstance.h
+
+HUD:
+- BaseHUDModule.h/.cpp
+- HUDContextTypes.h
+- HUDGlobalDefaults.h
+- HUDTransitionManager.h/.cpp
+- MainHUDWidget.h/.cpp
+- SpectatorTrackerComponent.h/.cpp
+- SubmarineHUDComponent.h/.cpp
+- SubmarineHUDDebugSettings.h
+- SubmarineHUDSettings.h
+- TrackableSubmarine.h
+
+Load:
+- LoadingScreenSettings.h
+- SubmarineAssetLoader.h/.cpp
+- SubmarineLoadingScreen.h/.cpp
+
+Match:
+- MatchSettingsDataAsset.h
+- RuntimeMatchSettings.h/.cpp
+
+Radar:
+- RadarComponent.h/.cpp
+- RadarSettings.h
+
+Replay:
+- ReplayData.h
+- ReplayGhostComponent.h/.cpp
+- ReplayHelpers.h/.cpp
+- ReplayPlayBackComponent.h/.cpp
+- ReplayRecorderComponent.h/.cpp
+- ReplaySettings.h
+
+Spawn:
+- SpawnManagerComponent.h/.cpp
+- SpawnSettings.h
+- SubmarineSpawnLocator.h/.cpp
+- TeamSpawnSettings.h/.cpp
+
+Submarine:
+- SubmarineCharacteristics.h/.cpp
+- SubmarineCollisionComponent.h/.cpp
+- SubmarineGameMode.h/.cpp
+- SubmarinePawn.h/.cpp
+- SubmarinePhysicsComponent.h/.cpp
+- SubmarineSpectatorPawn.h/.cpp
+
+Torpedo:
+- SubmarineTorpedoComponent.h/.cpp
+- TorpedoCharacteristics.h/.cpp
+- TorpedoPawn.h/.cpp
+- TorpedoPhysicsComponent.h/.cpp
+
+UI:
+- AmmoCounterModule.h
+- DepthometerModule.h
+- EngineStateModule.h/.cpp
+- HealthBarModule.h/.cpp
+- NormalAmmoModule.h/.cpp
+- NumericDisplayModule.h/.cpp
+- PitchModule.h/.cpp
+- PositionalIndicatorModule.h/.cpp
+- RadarModule.h/.cpp
+- SpecialAmmoModule.h/.cpp
+- SpecialTorpedoSlotModule.h/.cpp
+- TorpedoIconModule.h/.cpp
+
+Feel free to add new folders, maybe move some files in the future (ask me first, but
+I can see SubmarineGameMode.h/.cpp being moved at some points, maybe not in this phase though)
+
+====================================================
+11) SOME OF MY FILES
+==================================
+Here are some important files so you have more context on what's going on:
+SubmarinePawn.cpp, SubmarineGameMode.cpp, SubmarinePhysicsComponent.cpp,
+TorpedoPhysicsComponent.cpp, TorpedoPawn.cpp, SubmarineSpectatorPawn.cpp
+
+If you need other files because you lack of context please tell me.
+
+====================================================
+WHAT I WANT FROM YOU NOW
+========================
+
+I want:
+
+1. A critique of the planned architecture
+2. Identification of risky technical decisions
+3. Recommended UE5-native approaches
+4. Recommended rendering architecture
+5. Validation of the RGBA regional water concept
+6. Recommended data flow between gameplay and rendering
+7. The COMPLETE architecture proposal for STEP 6.1 ONLY
+8. File list for STEP 6.1 ONLY
+9. Ownership hierarchy for STEP 6.1 ONLY
+10. Startup/runtime pipeline for STEP 6.1 ONLY
+11. Editor workflow proposal
+12. Performance strategy for STEP 6.1
+13. Questions you still need answered before coding
+
+Do NOT start implementing 6.1+ yet.
+Focus ONLY on the foundational architecture layer.

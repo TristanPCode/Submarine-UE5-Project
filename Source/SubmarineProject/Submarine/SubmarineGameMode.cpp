@@ -318,7 +318,17 @@ void ASubmarineGameMode::ExecutePostLoad()
                 continue;
             }
 
-            DisplayComp->SetBillboardContext(BillboardCtx, E2.TeamIndex, ActiveRMS);
+            // Collect all BBCs from known spawn entries (no world scan needed)
+            TArray<USubmarineInfoBillboardComponent*> Sources;
+            for (const FSpawnedSubmarineEntry& SE : SpawnManager->GetSpawnEntries())
+            {
+                if (!SE.SpawnedPawn.IsValid()) continue;
+                USubmarineInfoBillboardComponent* BBC =
+                    SE.SpawnedPawn->FindComponentByClass<USubmarineInfoBillboardComponent>();
+                if (BBC) Sources.Add(BBC);
+            }
+
+            DisplayComp->SetBillboardContextWithSources(BillboardCtx, E2.TeamIndex, ActiveRMS, Sources);
             UE_LOG(LogTemp, Log,
                 TEXT("[BB:Init] PC='%s'  P%d  Team=%d  Ctx=%s"),
                 *PC->GetName(), E2.LocalPlayerIndex, E2.TeamIndex,
@@ -469,7 +479,17 @@ void ASubmarineGameMode::OnSubmarineDied(ASubmarinePawn* DeadSubmarine,
             TEXT("[GameMode] OnSubmarineDied: '%s' is CPU/remote — "
                 "skipping death sequence"),
             DeadSubmarine ? *DeadSubmarine->GetName() : TEXT("NULL"));
-        if (DeadSubmarine) DeadSubmarine->Destroy();
+        if (DeadSubmarine)
+        {
+            // Flag as dead before destroying so billboard component
+            // hides the widget immediately without waiting for
+            // GetOwner() to return null on the next logic tick.
+            DeadSubmarine->bDead = true;
+            UE_LOG(LogTemp, Log,
+                TEXT("[GameMode] CPU death: bDead set on '%s'"),
+                *DeadSubmarine->GetName());
+            DeadSubmarine->Destroy();
+        }
         return;
     }
     // Everything below only runs for human local players:
@@ -622,14 +642,56 @@ void ASubmarineGameMode::OnSubmarineDied(ASubmarinePawn* DeadSubmarine,
     }
     if (WeakPC.IsValid()) {
         UE_LOG(LogTemp, Log, TEXT("[GameMode] Death HUD: Tansition to Context set -- instant opacity 0 at %.2fs"), Delay);
-        GetWorld()->GetTimerManager().SetTimer(ContextTimer, FTimerDelegate::CreateLambda([WeakPC, DeathCtx]()
+        // Capture weak pointers -- safer than capturing 'this' in deferred lambdas
+        TWeakObjectPtr<UHUDGlobalDefaults> WeakGlobalDefaults(HUDGlobalDefaults);
+        TWeakObjectPtr<URuntimeMatchSettings> WeakActiveRMS(ActiveRMS);
+        GetWorld()->GetTimerManager().SetTimer(ContextTimer,
+            FTimerDelegate::CreateLambda([WeakPC, DeathCtx, WeakGlobalDefaults, WeakActiveRMS]()
             {
-                UHUDTransitionManager* TransMgr = WeakPC->FindComponentByClass<UHUDTransitionManager>();
-                if (TransMgr) {
-                    TransMgr->SetHUDOpacity(0.f);
-                    TransMgr->TransitionToContext(DeathCtx, nullptr);
-                }
-            }), FMath::Max(Delay, 0.01f), false);
+                    if (!WeakPC.IsValid()) return;
+                    UHUDTransitionManager* TransMgr =
+                        WeakPC->FindComponentByClass<UHUDTransitionManager>();
+                    if (TransMgr)
+                    {
+                        TransMgr->SetHUDOpacity(0.f);
+                        TransMgr->TransitionToContext(DeathCtx, nullptr);
+                        // HUDFadeIn for the DeathReplay widget.
+                        // DeathSequenceComponent handles the CAMERA fade separately.
+                        // The HUD widget is now visible but at opacity 0 after
+                        // SwapHUDSettings -- we must fade it in independently.
+                        UScreenFadeComponent* FadeComp = WeakPC.IsValid()
+                            ? WeakPC->FindComponentByClass<UScreenFadeComponent>() : nullptr;
+                        float DeathHUDFadeIn = 0.f;  // fallback
+                        bool bDeathHUDDarkness = false;
+                        if (FadeComp && FadeComp->HasFadeEntry("DeathReplay"))
+                        {
+                            const FScreenFadeSettings& DS = FadeComp->GetFadeEntry("DeathReplay");
+                            DeathHUDFadeIn = DS.bFadeIn ? DS.FadeInDuration : 0.f;
+                            bDeathHUDDarkness = DS.bFadeInHUDDarkness;
+                        }
+                        TransMgr->HUDFadeIn(DeathHUDFadeIn, bDeathHUDDarkness);
+                        UE_LOG(LogTemp, Log,
+                            TEXT("[GameMode] DeathReplay HUDFadeIn(%.2fs) for PC='%s'"),
+                            DeathHUDFadeIn,
+                            WeakPC.IsValid() ? *WeakPC->GetName() : TEXT("?"));
+                    }
+                    // Update billboard context for this HUD context
+                    UBillboardDisplayComponent* BillboardDisp =
+                        WeakPC->FindComponentByClass<UBillboardDisplayComponent>();
+                    if (BillboardDisp)
+                    {
+                        UInfoBillboardContextSettings* BillCtx = WeakGlobalDefaults.IsValid()
+                            ? WeakGlobalDefaults->ResolveBillboard(DeathCtx) : nullptr;
+                        BillboardDisp->SetBillboardContext(
+                            BillCtx,
+                            BillboardDisp->LocalTeamIndex,
+                            WeakActiveRMS.Get());
+                        UE_LOG(LogTemp, Log,
+                            TEXT("[GameMode] Billboard context -> %s for DeathCtx=%d"),
+                            BillCtx ? *BillCtx->GetName() : TEXT("NULL (no billboard DA configured)"),
+                            (int32)DeathCtx);
+                    }
+                }), FMath::Max(Delay, 0.01f), false);
     }
 
     // ------------------------------------------------------------------
@@ -866,6 +928,7 @@ void ASubmarineGameMode::OnDeathSequenceComplete()
 
     DC->Possess(Spectator);
     Spectator->InitSpectator(AllSubs, true);
+    Spectator->bUsesGamepad = DeadSub->bUsesGamepad;
     if (CameraBlendSettings) Spectator->BlendSettings = CameraBlendSettings;
 
     // Auto-select a submarine to spectate
@@ -881,8 +944,16 @@ void ASubmarineGameMode::OnDeathSequenceComplete()
     {
         // Defer one tick so the new widget has geometry before SetHUDOpacity(1.f)
         TWeakObjectPtr<UHUDTransitionManager> WeakTrans(TransMgr);
+        TWeakObjectPtr<APlayerController> WeakPC(PC);
+        TWeakObjectPtr<UHUDGlobalDefaults> WeakDefaults(HUDGlobalDefaults);
+        TWeakObjectPtr<URuntimeMatchSettings> WeakRMS(ActiveRMS);
         const bool bSpectIsSplit = ActiveRMS && ActiveRMS->bSplitScreenEnabled && ActiveRMS->LocalPlayerCount >= 2;
-        GetWorld()->GetTimerManager().SetTimerForNextTick([WeakTrans, bSpectIsSplit]()
+
+        // Capture AllSubs for the lambda — avoids world scan racing
+        TArray<TWeakObjectPtr<ASubmarinePawn>> WeakAllSubs;
+        for (ASubmarinePawn* S : AllSubs) WeakAllSubs.Add(S);
+
+        GetWorld()->GetTimerManager().SetTimerForNextTick([WeakTrans, WeakPC, WeakDefaults, WeakRMS, bSpectIsSplit, WeakAllSubs]()
             {
                 if (WeakTrans.IsValid())
                 {
@@ -890,6 +961,38 @@ void ASubmarineGameMode::OnDeathSequenceComplete()
                         ? EHUDContext::Spectator_Splitscreen
                         : EHUDContext::Spectator;
                     WeakTrans->TransitionToContext(SpectCtx, nullptr);
+                    // Update billboard context for spectator
+                    UBillboardDisplayComponent* BillboardDisp =
+                        WeakPC.IsValid()
+                        ? WeakPC->FindComponentByClass<UBillboardDisplayComponent>() : nullptr;
+                    UE_LOG(LogTemp, Log,
+                        TEXT("[GameMode|BBCtx] Spectator lambda fired: PC='%s'  "
+                            "SpectCtx=%d  BillboardDisp=%s  WeakDefaults=%s"),
+                        WeakPC.IsValid() ? *WeakPC->GetName() : TEXT("?"),
+                        (int32)SpectCtx,
+                        BillboardDisp ? TEXT("found") : TEXT("NOT FOUND on PC"),
+                        WeakDefaults.IsValid() ? TEXT("valid") : TEXT("INVALID"));
+                    if (BillboardDisp)
+                    {
+                        // Resolve BBCs from the known-alive subs list (no world scan)
+                        TArray<USubmarineInfoBillboardComponent*> Sources;
+                        for (const TWeakObjectPtr<ASubmarinePawn>& WS : WeakAllSubs)
+                        {
+                            if (!WS.IsValid()) continue;
+                            USubmarineInfoBillboardComponent* BBC =
+                                WS->FindComponentByClass<USubmarineInfoBillboardComponent>();
+                            if (BBC) Sources.Add(BBC);
+                        }
+
+                        UInfoBillboardContextSettings* BillCtx = WeakDefaults.IsValid()
+                            ? WeakDefaults->ResolveBillboard(SpectCtx) : nullptr;
+                        UE_LOG(LogTemp, Log,
+                            TEXT("[GameMode|BBCtx] ResolveBillboard(SpectCtx=%d) -> %s"),
+                            (int32)SpectCtx,
+                            BillCtx ? *BillCtx->GetName() : TEXT("NULL -- assign DA in HUDGlobalDefaults"));
+                        BillboardDisp->SetBillboardContext(BillCtx,
+                            BillboardDisp->LocalTeamIndex, WeakRMS.Get());
+                    }
                 }
             });
         UE_LOG(LogTemp, Log,

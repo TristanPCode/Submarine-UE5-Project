@@ -646,6 +646,14 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera|Periscope")
     float PeriscopeYawSensitivity_Gamepad = 2.f;
 
+    /** Scroll zoom speed (radius change per scroll unit) */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera|Periscope")
+    float PeriscopeScrollSpeedMultiplier = 1.f;
+
+    /** Scroll zoom speed for gamepad DPAD hold (radius change continously). */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Camera|Periscope")
+    float PeriscopeScrollSpeedMultiplier_Gamepad = 0.4f;
+
     // -- Camera (3rd Person) ----------------------
 
     /** Local offset of the 3rd person camera pivot relative to submarine root */

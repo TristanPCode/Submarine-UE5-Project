@@ -397,12 +397,15 @@ void ASubmarineSpectatorPawn::SpectatorDown()
 void ASubmarineSpectatorPawn::SpectatorMouseX(float AxisValue)
 {
     if (!bSpectatorThirdPerson) return; // POV = static
+    if (FMath::Abs(AxisValue) < 0.1f) return;
+    
     DesiredOrbitYaw += AxisValue * GetOrbitYawSensitivity();
 }
 
 void ASubmarineSpectatorPawn::SpectatorMouseY(float AxisValue)
 {
     if (!bSpectatorThirdPerson) return;
+    if (FMath::Abs(AxisValue) < 0.1f) return;
     DesiredOrbitPitch = FMath::Clamp(
         DesiredOrbitPitch + AxisValue * GetOrbitPitchSensitivity(),
         GetOrbitMinPitch(), GetOrbitMaxPitch());
@@ -680,8 +683,10 @@ float ASubmarineSpectatorPawn::GetOrbitMoveBlendSpeed() const
 float ASubmarineSpectatorPawn::GetOrbitYawSensitivity() const
 {
     if (IsValid(CurrentSubTarget))
-        if (const USubmarineCharacteristics* S = GetSubStats(CurrentSubTarget.Get()))
-            return S->ThirdPersonYawSensitivity;
+        if (const USubmarineCharacteristics* S = GetSubStats(CurrentSubTarget.Get())) {
+            return bUsesGamepad ? S->ThirdPersonYawSensitivity_Gamepad : S->ThirdPersonYawSensitivity;
+        }
+            
     return 1.f;
 }
 
@@ -689,7 +694,10 @@ float ASubmarineSpectatorPawn::GetOrbitPitchSensitivity() const
 {
     if (IsValid(CurrentSubTarget))
         if (const USubmarineCharacteristics* S = GetSubStats(CurrentSubTarget.Get()))
-            return S->ThirdPersonPitchSensitivity;
+        {
+            return bUsesGamepad ? S->ThirdPersonPitchSensitivity_Gamepad : S->ThirdPersonPitchSensitivity;
+        }
+            
     return 1.f;
 }
 
@@ -697,7 +705,7 @@ float ASubmarineSpectatorPawn::GetOrbitScrollSpeed() const
 {
     if (IsValid(CurrentSubTarget))
         if (const USubmarineCharacteristics* S = GetSubStats(CurrentSubTarget.Get()))
-            return S->ThirdPersonScrollSpeed;
+            return bUsesGamepad ? S->ThirdPersonScrollSpeed_Gamepad : S->ThirdPersonScrollSpeed;
     return 200.f;
 }
 

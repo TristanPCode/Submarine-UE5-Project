@@ -50,6 +50,13 @@ public:
     void SetBillboardContext(UInfoBillboardContextSettings* Context,
         int32 LocalPlayerTeamIndex, URuntimeMatchSettings* InMatchSettings = nullptr);
 
+    // Called when the full set of billboard sources is already known (avoids world scan)
+    void SetBillboardContextWithSources(
+        UInfoBillboardContextSettings* Context,
+        int32 InLocalTeamIndex,
+        URuntimeMatchSettings* InMatchSettings,
+        const TArray<USubmarineInfoBillboardComponent*>& KnownSources);
+
     /**
      * Widget class to instantiate for each billboard entry.
      * Set this to your BP_InfoBillboardWidget class in the BP subclass or DA.
@@ -71,14 +78,19 @@ public:
 
 private:
 
+    // Remove TObjectPtr from FBillboardEntry — use raw pointer, GC managed via parallel array
     struct FBillboardEntry
     {
         TWeakObjectPtr<USubmarineInfoBillboardComponent> Source;
-        TObjectPtr<UInfoBillboardWidget>                 Widget;
-        TObjectPtr<UInfoBillboardSettings>               CachedSettings;  // cached for fast tick
-        bool bVisible = false;
-        float DiagAccumulator = 0.f;   // throttles per-entry position log
+        UInfoBillboardWidget* Widget = nullptr;  // raw, lifetime owned by TrackedWidgets
+        UInfoBillboardSettings* CachedSettings = nullptr; // raw, DA assets are always rooted
+        bool  bVisible = false;
+        float DiagAccumulator = 0.f;
     };
+
+    // This UPROPERTY array is what actually keeps the widgets alive through GC
+    UPROPERTY()
+    TArray<TObjectPtr<UInfoBillboardWidget>> TrackedWidgets;
 
     UPROPERTY()
     TObjectPtr<UInfoBillboardContextSettings> BillboardCtx;

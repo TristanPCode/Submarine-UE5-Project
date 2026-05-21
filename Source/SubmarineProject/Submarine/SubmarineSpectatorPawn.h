@@ -41,6 +41,10 @@ public:
     virtual void Tick(float DeltaTime) override;
     virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 
+    // Set by the Controller, allows different sensibility settings
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Spectator|State")
+    bool bUsesGamepad = false;
+
 
     // -------------------------------------------------------------------------
     //  Initialisation API (call from GameMode or PlayerController on death)

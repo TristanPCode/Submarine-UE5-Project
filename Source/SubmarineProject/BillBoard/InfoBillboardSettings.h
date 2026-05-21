@@ -256,4 +256,13 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Billboard|Placement",
         meta = (ClampMin = "0.0"))
     float MaxVisibleDistance = 0.f;
+
+    /**
+     * If true, this billboard is always visible regardless of radar identification.
+     * Use this for Spectator and DeathReplay contexts where the observer
+     * has no radar and should see all billboards unconditionally.
+     * If false, the billboard respects bRequireIdentification on the pawn component.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Billboard|Placement")
+    bool bIgnoreIdentificationGate = false;
 };
