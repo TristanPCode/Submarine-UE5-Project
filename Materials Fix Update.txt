@@ -1,0 +1,23 @@
+In M_Ocean_Surface, add these parameters:
+
+Ocean_HeightField — Texture2D parameter, no default needed (assigned by C++ at runtime)
+Ocean_HeightField_MapMin — Vector4 parameter (X=MapMin.X, Y=MapMin.Y)
+Ocean_HeightField_MapMax — Vector4 parameter (X=MapMax.X, Y=MapMax.Y)
+
+In the WPO chain, add this before your Gerstner output:
+// UV from world position
+WorldXY = (PixelWorldPosition.XY - Ocean_HeightField_MapMin.XY)
+        / (Ocean_HeightField_MapMax.XY - Ocean_HeightField_MapMin.XY)
+
+// Sample height field (R channel = water height in world UU)
+RegionalHeight = Texture2DSample(Ocean_HeightField, UV).R
+
+// Offset from mesh actor Z (MeshBaseZ is no longer needed --
+// just use the actor's absolute Z which is baked at compile time
+// as a WorldPosition offset, or pass it as a scalar)
+HeightOffset = RegionalHeight - ActorWorldZ
+
+// Add to Gerstner
+FinalWPO = (0, 0, HeightOffset + GerstnerDisplacement_Z)
+For ActorWorldZ: the simplest approach is a scalar MPC parameter Ocean_MeshBaseZ written once at BeginPlay by OceanSurfaceActor (one line: MPCI->SetScalarParameterValue("Ocean_MeshBaseZ", GetActorLocation().Z)). Since the actor no longer moves, this is written once and stays correct forever.
+For real waves: increase WaveAmplitude in your WaterRegionDataAsset from 80 to 800–2000 UU. Add a second Gerstner layer at 0.4× frequency and 0.6× amplitude in the material. The per-player MPC writes for wave amplitude, speed, and direction are already correct and feeding your material.

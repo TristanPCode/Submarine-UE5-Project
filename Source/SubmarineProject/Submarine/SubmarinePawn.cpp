@@ -71,6 +71,34 @@ void ASubmarinePawn::BeginPlay()
 {
     Super::BeginPlay();
 
+    // Register with the ocean subsystem for per-frame water height sampling.
+    // This ensures the physics component always gets a cached water height
+    // rather than triggering a full region evaluation each tick.
+    UGameInstance* GI = GetGameInstance();
+    if (GI)
+    {
+        UOceanSubsystem* OceanSys = GI->GetSubsystem<UOceanSubsystem>();
+        if (OceanSys)
+        {
+            // Determine player index from the owning controller.
+            // CPU submarines use PlayerIndex = -1 (non-player slot).
+            int32 PlayerIdx = -1;
+            bool bIsLocalPlayer = false;
+
+            APlayerController* PC = Cast<APlayerController>(GetController());
+            if (PC)
+            {
+                // GetLocalPlayer() gives us the local player index for split-screen.
+                ULocalPlayer* LP = PC->GetLocalPlayer();
+                if (LP)
+                {
+                    PlayerIdx = LP->GetControllerId();
+                    bIsLocalPlayer = true;
+                }
+            }
+        }
+    }
+
     const USubmarineCharacteristics* Stats = GetStats();
 
     SafeVerticalStateCount = Stats->GetSafeVerticalStateCount();
@@ -139,6 +167,91 @@ void ASubmarinePawn::BeginPlay()
 }
 
 // -----------------------------------------------------------------------------
+//  EndPlay
+// -----------------------------------------------------------------------------
+
+void ASubmarinePawn::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+    // Unregister from the ocean subsystem to prevent stale weak pointer entries.
+    UGameInstance* GI = GetGameInstance();
+    if (GI)
+    {
+        UOceanSubsystem* OceanSys = GI->GetSubsystem<UOceanSubsystem>();
+        if (OceanSys)
+        {
+            OceanSys->UnregisterSampleActor(this);
+        }
+    }
+
+    Super::EndPlay(EndPlayReason);
+}
+
+// -----------------------------------------------------------------------------
+//  PossessedBy and UnPossessed override
+// -----------------------------------------------------------------------------
+
+void ASubmarinePawn::PossessedBy(AController* NewController)
+{
+    Super::PossessedBy(NewController);
+
+    // PossessedBy fires after the controller is fully assigned, so
+    // Cast<APlayerController> is reliable here unlike BeginPlay.
+    // This is the correct place to register with the ocean subsystem
+    // so player vs CPU detection works correctly.
+    UGameInstance* GI = GetGameInstance();
+    if (!GI) return;
+
+    UOceanSubsystem* OceanSys = GI->GetSubsystem<UOceanSubsystem>();
+    if (!OceanSys) return;
+
+    // Unregister first in case this pawn was previously registered
+    // (e.g. if it was possessed by a different controller before).
+    OceanSys->UnregisterSampleActor(this);
+
+    int32 PlayerIdx = -1;
+    bool  bIsLocalPlayer = false;
+
+    APlayerController* PC = Cast<APlayerController>(NewController);
+    if (PC)
+    {
+        ULocalPlayer* LP = PC->GetLocalPlayer();
+        if (LP)
+        {
+            PlayerIdx = LP->GetControllerId();
+            bIsLocalPlayer = true;
+        }
+    }
+
+    const FName Label = FName(*FString::Printf(
+        TEXT("%s_%s"),
+        bIsLocalPlayer ? TEXT("Player") : TEXT("CPU"),
+        *GetName()));
+
+    OceanSys->RegisterSampleActor(this, Label, bIsLocalPlayer, PlayerIdx);
+}
+
+void ASubmarinePawn::UnPossessed()
+{
+    // Re-register as a non-player actor when the controller releases the pawn.
+    // This keeps the pawn in the ocean cache for physics correctness but
+    // removes it from the player slots.
+    UGameInstance* GI = GetGameInstance();
+    if (GI)
+    {
+        UOceanSubsystem* OceanSys = GI->GetSubsystem<UOceanSubsystem>();
+        if (OceanSys)
+        {
+            OceanSys->UnregisterSampleActor(this);
+            // Re-register as CPU/non-player so physics still works post-death.
+            const FName Label = FName(*FString::Printf(TEXT("Unpossessed_%s"), *GetName()));
+            OceanSys->RegisterSampleActor(this, Label, false, -1);
+        }
+    }
+
+    Super::UnPossessed();
+}
+
+// -----------------------------------------------------------------------------
 //  Tick
 // -----------------------------------------------------------------------------
 void ASubmarinePawn::Tick(float DeltaTime)
@@ -151,14 +264,27 @@ void ASubmarinePawn::Tick(float DeltaTime)
     TickYawMovement(DeltaTime);
     TickFinalMovement(DeltaTime);
     TickCameraSwitch(DeltaTime);
-    //TickAntiStuck(DeltaTime);
 
-    // Enforce zero roll every tick — collisions must never tilt the submarine sideways
-    FRotator Rot = GetActorRotation();
-    if (FMath::Abs(Rot.Roll) > KINDA_SMALL_NUMBER)
+    // Apply wave roll perturbation AFTER all movement ticks.
+    // Roll is sourced exclusively from USubmarinePhysicsComponent::CurrentAngularPerturbation.
+    // Collisions never write roll (only ExternalLinear/Vertical/YawVelocity),
+    // so setting roll = perturbation here never conflicts with collision behavior.
+    // When not near the surface, CurrentAngularPerturbation.Roll auto-recovers to 0.
+    if (PhysicsHandler)
     {
-        Rot.Roll = 0.f;
+        FRotator Rot = GetActorRotation();
+        Rot.Roll = PhysicsHandler->CurrentAngularPerturbation.Roll;
         SetActorRotation(Rot);
+    }
+    else
+    {
+        // No physics component: enforce zero roll.
+        FRotator Rot = GetActorRotation();
+        if (FMath::Abs(Rot.Roll) > KINDA_SMALL_NUMBER)
+        {
+            Rot.Roll = 0.f;
+            SetActorRotation(Rot);
+        }
     }
 
     // Update active camera positions
@@ -643,13 +769,13 @@ void ASubmarinePawn::TickVerticalMovement(float DeltaTime)
         if (CollisionHandler)
             CollisionHandler->CheckRotationContactBP(1);
 
-        // Always enforce zero roll after any rotation
-        FRotator AfterRot = GetActorRotation();
-        if (FMath::Abs(AfterRot.Roll) > KINDA_SMALL_NUMBER)
-        {
-            AfterRot.Roll = 0.f;
-            SetActorRotation(AfterRot);
-        }
+        //// Always enforce zero roll after any rotation
+        //FRotator AfterRot = GetActorRotation();
+        //if (FMath::Abs(AfterRot.Roll) > KINDA_SMALL_NUMBER)
+        //{
+        //    AfterRot.Roll = 0.f;
+        //    SetActorRotation(AfterRot);
+        //}
     }
 
     // Convert pitch to vertical speed
@@ -1340,6 +1466,12 @@ float ASubmarinePawn::GetCurrentDepth() const
 {
     if (!PhysicsHandler) return 0.f;
     return PhysicsHandler->CurrentDepth;
+}
+
+float ASubmarinePawn::GetDisplayDepth() const
+{
+    if (!PhysicsHandler) return 0.f;
+    return PhysicsHandler->GetDisplayDepth();
 }
 
 float ASubmarinePawn::GetCurrentPitch() const

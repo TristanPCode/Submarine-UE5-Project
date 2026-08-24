@@ -9,7 +9,7 @@ public class SubmarineProject : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 	
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "Landscape", "Niagara", "UMG", "Slate", "SlateCore", "AIModule", "ApplicationCore" });
+		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "Landscape", "Niagara", "NiagaraCore", "UMG", "Slate", "SlateCore", "AIModule", "ApplicationCore", "ProceduralMeshComponent" });
 
 		PrivateDependencyModuleNames.AddRange(new string[] {  });
 
@@ -30,7 +30,8 @@ public class SubmarineProject : ModuleRules
             Path.Combine(ModuleDirectory, "Spawn"),
             Path.Combine(ModuleDirectory, "Submarine"),
             Path.Combine(ModuleDirectory, "Torpedo"),
-            Path.Combine(ModuleDirectory, "UI")
+            Path.Combine(ModuleDirectory, "UI"),
+            Path.Combine(ModuleDirectory, "Water")
         });
 
         // Uncomment if you are using Slate UI

@@ -151,6 +151,8 @@ public:
     /** Discrete linear speed state (Stand, ForwardMIN, BackwardMAX, etc.). */
     virtual ELinearSpeedState GetLinearSpeedState() const = 0;
 
+    virtual float GetDisplayDepth() const = 0;
+
     // -----------------------------------------------------------------------
     //  Ammo getters
     // -----------------------------------------------------------------------

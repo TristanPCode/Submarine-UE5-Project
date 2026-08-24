@@ -53,6 +53,15 @@ public:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Torpedo|Physics")
     float CurrentDepth = 0.f;
 
+    /**
+     * True when the torpedo is within NearSurfaceThreshold of the water surface.
+     * Used by UTorpedoWakeComponent (Phase 6.3) to decide whether to show
+     * surface disturbance effects. Threshold is hardcoded to 500 UU since
+     * torpedoes don't have a DA parameter for this yet -- add if needed.
+     */
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Torpedo|Physics")
+    bool bIsNearSurface = false;
+
     // -- Spawn interface ---------------------------------------------------
 
     /**

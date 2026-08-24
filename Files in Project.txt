@@ -20,7 +20,7 @@ Death:
 - DeathSequenceComponent.h/.cpp
 
 Game:
-- SubmarineGameInstance.h
+- SubmarineGameInstance.h/.cpp
 
 HUD:
 - BaseHUDModule.h/.cpp
@@ -88,3 +88,21 @@ UI:
 - SpecialAmmoModule.h/.cpp
 - SpecialTorpedoSlotModule.h/.cpp
 - TorpedoIconModule.h/.cpp
+
+Water:
+- BoxWaterRegion.h/.cpp
+- CylinderWaterRegion.h/.cpp
+- LayeredSplineWaterRegion.h/.cpp
+- OceanDebugSettings.h
+- OceanHeightFieldGenerator.h/.cpp
+- OceanSubsystem.h/.cpp
+- OceanSurfaceActor.h/.cpp
+- OceanTypes.h
+- OceanWakeRegistry.h/.cpp
+- SphereWaterRegion.h/.cpp
+- SplineWaterRegion.h/.cpp
+- TorpedoWakeComponent.h/.cpp
+- WakeComponent.h/.cpp
+- WakeTypes.h
+- WaterRegionActor.h/.cpp
+- WaterRegionDataAsset.h

@@ -597,6 +597,199 @@ public:
         meta = (ClampMin = "0.0", EditCondition = "bEnableDepthPhysics"))
     float BuoyancyDepthNerfCoefficient = 0.000001f;
 
+    // -- Near-Surface State ---------------------------------------------------
+
+    /**
+     * Distance below the average regional water height at which the submarine
+     * is considered "near surface". Uses blended regional water height, NOT
+     * instantaneous wave peaks, so wave troughs do not toggle this state.
+     * Units: cm.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Surface|NearSurface",
+        meta = (ClampMin = "0.0"))
+    float NearSurfaceThreshold = 1000.f;
+
+    /**
+     * Speed at which NearSurfaceAlpha transitions between 0 and 1.
+     * Higher = faster transition (less smooth). Recommended: 1.5 - 3.0.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Surface|NearSurface",
+        meta = (ClampMin = "0.1"))
+    float NearSurfaceTransitionRate = 2.f;
+
+    /**
+     * Additional offset applied to the depth value exposed to the Depthometer HUD.
+     * Positive = submarine appears deeper than actual (aesthetic tuning).
+     * Does NOT affect gameplay physics or near-surface detection.
+     * Units: cm.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Surface|NearSurface")
+    float NearSurfaceDepthUIOffset = 0.f;
+
+    // -- Surface Speed Bonus --------------------------------------------------
+
+    /**
+     * Speed multiplier applied to forward thrust when the submarine is at the
+     * surface (NearSurfaceAlpha = 1). Interpolated smoothly via NearSurfaceAlpha.
+     * 1.0 = no bonus. 1.15 = 15% speed bonus at the surface.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Surface|SpeedBonus",
+        meta = (ClampMin = "1.0", ClampMax = "2.0"))
+    float SurfaceSpeedBonus = 1.15f;
+
+    /**
+     * Whether the surface speed bonus is active. Disable for submarines that
+     * should not benefit from surfacing (e.g. purely underwater units).
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Surface|SpeedBonus")
+    bool bEnableSurfaceSpeedBonus = true;
+
+    // -- Regional Drag --------------------------------------------------------
+
+    /**
+     * Whether this submarine is affected by per-region drag multipliers.
+     * If false, regional drag from WaterRegionDataAsset is ignored.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Surface|RegionalDrag")
+    bool bEnableRegionalDrag = true;
+
+    // -- Agitation -> Physics --------------------------------------------------
+
+    /**
+     * Master scale for all agitation-driven physics forces and perturbations.
+     * 0.0 = agitation has no physical effect. 1.0 = full effect.
+     * Use this to globally tune how "alive" the ocean feels for this submarine.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Surface|Agitation",
+        meta = (ClampMin = "0.0", ClampMax = "3.0"))
+    float AgitationPhysicsScale = 1.f;
+
+    /**
+     * Amplitude of the vertical heave force caused by waves (cm/s² equivalent).
+     * This is the up/down bobbing force applied when near the surface.
+     * Higher = more pronounced vertical motion. Recommended: 50 - 300.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Surface|Agitation",
+        meta = (ClampMin = "0.0"))
+    float AgitationHeaveAmplitude = 150.f;
+
+    /**
+     * Frequency of the heave oscillation (Hz). Lower = slow rolling swell.
+     * Higher = choppy rapid motion. Recommended: 0.3 - 1.2.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Surface|Agitation",
+        meta = (ClampMin = "0.01"))
+    float AgitationHeaveFrequency = 0.6f;
+
+    // -- Angular Perturbation (Roll / Pitch from waves) -----------------------
+
+    /**
+     * Maximum roll angle (degrees) that wave agitation can apply.
+     * Hard clamped — the submarine will never exceed this regardless of
+     * agitation intensity. Recommended: 4 - 10.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Surface|Agitation|Angular",
+        meta = (ClampMin = "0.0", ClampMax = "45.0"))
+    float MaxRollPerturbation = 6.f;
+
+    /**
+     * Maximum pitch perturbation from waves (degrees). Always smaller than
+     * roll since submarines are more stable front-to-back. Recommended: 2 - 5.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Surface|Agitation|Angular",
+        meta = (ClampMin = "0.0", ClampMax = "20.0"))
+    float MaxPitchPerturbation = 3.f;
+
+    /**
+     * Oscillation amplitude for roll perturbation (degrees peak-to-peak before
+     * clamping). The actual applied value is further scaled by AgitationPhysicsScale
+     * and NearSurfaceAlpha.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Surface|Agitation|Angular",
+        meta = (ClampMin = "0.0"))
+    float AgitationRollAmplitude = 5.f;
+
+    /**
+     * Oscillation frequency for roll perturbation (Hz).
+     * Slightly different from heave frequency for a natural multi-frequency feel.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Surface|Agitation|Angular",
+        meta = (ClampMin = "0.01"))
+    float AgitationRollFrequency = 0.5f;
+
+    /**
+     * Oscillation amplitude for pitch perturbation from waves (degrees).
+     * Applied at a different frequency from roll for a non-synchronized feel.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Surface|Agitation|Angular",
+        meta = (ClampMin = "0.0"))
+    float AgitationPitchAmplitude = 2.f;
+
+    /**
+     * Oscillation frequency for pitch perturbation (Hz).
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Surface|Agitation|Angular",
+        meta = (ClampMin = "0.01"))
+    float AgitationPitchFrequency = 0.7f;
+
+    /**
+     * How fast the angular perturbation accumulator follows its target.
+     * Higher = snappier response to wave inputs. Recommended: 2.0 - 5.0.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Surface|Agitation|Angular",
+        meta = (ClampMin = "0.1"))
+    float AngularPerturbationInterpRate = 3.f;
+
+    /**
+     * How fast the perturbation recovers toward zero when fully submerged.
+     * Higher = faster levelling. Recommended: 1.5 - 4.0.
+     * The recovery only activates when NearSurfaceAlpha = 0.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Surface|Agitation|Angular",
+        meta = (ClampMin = "0.1"))
+    float AngularRecoveryRate = 2.f;
+
+    // -- Wake Spawn Offsets ------------------
+
+    /**
+     * Local X offset from submarine center to the stern (rear) spawn point
+     * for the wake trail. Negative X = behind the submarine.
+     * Tune this to place the ribbon at the back of your mesh.
+     * Units: cm. Typical value: -(half submarine length).
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Surface|Wake")
+    float WakeSternBackOffset = -300.f;
+
+    /**
+     * Local X offset from submarine center to the bow (front) spawn point.
+     * Used when the submarine is moving backward.
+     * Positive X = in front of the submarine.
+     * Units: cm. Typical value: +(half submarine length).
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Surface|Wake")
+    float WakeSternFrontOffset = 300.f;
+
+    /**
+     * Vertical offset applied to the wake and foam Niagara components
+     * relative to the computed water surface Z. Tune this to sit the
+     * ribbon flush with the visual ocean surface (compensates for WPO
+     * wave peaks that sit above the authoritative flat water height).
+     * Positive = higher, Negative = lower. Units: cm.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Surface|Wake")
+    float WakeZOffset = 0.f;
+
+    /**
+     * How often Niagara wake parameters are written (seconds).
+     * Lower = more responsive/fluid (more GPU writes per second).
+     * Higher = less GPU pressure but less responsive.
+     * 0.016 = 60 updates/sec, 0.033 = 30/sec, 0.1 = 10/sec.
+     * Recommended: 0.016 to 0.033 for smooth wake appearance.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Surface|Wake",
+        meta = (ClampMin = "0.005", ClampMax = "1.0"))
+    float WakeParameterUpdateInterval = 0.033f;
+
     // -- Debug --------------------------------
 
     /**

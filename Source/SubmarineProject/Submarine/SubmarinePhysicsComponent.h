@@ -31,6 +31,13 @@ public:
     virtual void TickComponent(float DeltaTime, ELevelTick TickType,
         FActorComponentTickFunction* ThisTickFunction) override;
 
+    // -- Characteristics reference -----------------------------------------
+    // Set by the owning pawn in BeginPlay so this works for both player
+    // and non-player submarines.
+
+    UPROPERTY()
+    TObjectPtr<USubmarineCharacteristics> Characteristics;
+
     // -- Force accumulation API---------------------------------------------
 
     /** Add a world-space force (cm/s²) for this tick only (cleared each tick) */
@@ -39,12 +46,19 @@ public:
     /** Add a world-space impulse (cm/s) applied instantly */
     void AddImpulse(const FVector& Impulse);
 
-    // -- Characteristics reference -----------------------------------------
-    // Set by the owning pawn in BeginPlay so this works for both player
-    // and non-player submarines.
+    // -- Thrust input (set by SubmarinePawn each tick) ---------------------
 
-    UPROPERTY()
-    TObjectPtr<USubmarineCharacteristics> Characteristics;
+    /**
+     * Target linear speed requested by player input (cm/s).
+     * Physics component applies a PD force to reach this.
+     */
+    float TargetLinearSpeed = 0.f;
+
+    /**
+     * Target vertical speed requested by player input (cm/s).
+     * Physics component applies a PD force to reach this.
+     */
+    float TargetVerticalSpeed = 0.f;
 
     // -- Current state (read by SubmarinePawn) -----------------------------
 
@@ -73,37 +87,122 @@ public:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Submarine|Physics")
     float CurrentDepth = 0.f;
 
-    // -- Thrust input (set by SubmarinePawn each tick) ---------------------
+    // -----------------------------------------------------------------------
+    //  Near-surface state
+    // -----------------------------------------------------------------------
 
     /**
-     * Target linear speed requested by player input (cm/s).
-     * Physics component applies a PD force to reach this.
+     * True when the submarine is within NearSurfaceThreshold of the average
+     * regional water height. Uses blended regional height, not wave peaks,
+     * so this state does not flicker with wave troughs.
      */
-    float TargetLinearSpeed = 0.f;
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Physics|Surface")
+    bool bIsNearSurface = false;
 
     /**
-     * Target vertical speed requested by player input (cm/s).
-     * Physics component applies a PD force to reach this.
+     * Smooth blend factor: 0 = fully deep, 1 = at the surface.
+     * All agitation, speed bonus, and perturbation effects scale by this.
+     * Interpolates at NearSurfaceTransitionRate from SubmarineCharacteristics.
      */
-    float TargetVerticalSpeed = 0.f;
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Physics|Surface")
+    float NearSurfaceAlpha = 0.f;
+
+    // -----------------------------------------------------------------------
+    //  Angular perturbation (wave roll/pitch)
+    //  Written by TickComponent. Read by SubmarinePawn::TickFinalMovement
+    //  and applied additively to the submarine's rotation.
+    // -----------------------------------------------------------------------
+
+    /**
+     * Current smoothed angular perturbation from wave agitation (degrees).
+     * Roll and Pitch are populated. Yaw is always 0 (waves don't yaw submarines).
+     * SubmarinePawn reads this and adds it to its TargetRotation each tick.
+     * Hard-clamped by MaxRollPerturbation / MaxPitchPerturbation in DA.
+     */
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Physics|Surface")
+    FRotator CurrentAngularPerturbation = FRotator::ZeroRotator;
+
+    // -----------------------------------------------------------------------
+    //  Depth accessor for HUD (applies NearSurfaceDepthUIOffset)
+    // -----------------------------------------------------------------------
+
+    /**
+     * Returns the depth value the Depthometer should display.
+     * Applies NearSurfaceDepthUIOffset from the DA for aesthetic tuning.
+     * Always >= 0 (clamped so above-surface never shows negative depth).
+     */
+    UFUNCTION(BlueprintPure, Category = "Physics|Surface")
+    float GetDisplayDepth() const;
+
+    // -----------------------------------------------------------------------
+    //  Helpers
+    // -----------------------------------------------------------------------
+
+    /** Returns the authoritative water surface Z at the submarine's position. */
+    float GetWaterSurfaceZ() const;
+
+    /** Safe stats accessor -- returns CDO if Characteristics is null. */
+    const USubmarineCharacteristics* GetStats() const;
 
 private:
-    // -- Internal force state ----------------------------------------------
+
+    // -----------------------------------------------------------------------
+    //  Force accumulators (cleared each tick after integration)
+    // -----------------------------------------------------------------------
 
     FVector AccumulatedForces = FVector::ZeroVector;
     FVector AccumulatedImpulse = FVector::ZeroVector;
 
-    // -- Physics sub-systems -----------------------------------------------
+    // -----------------------------------------------------------------------
+    //  Angular perturbation internals
+    // -----------------------------------------------------------------------
 
-    FVector ComputeGravityForce() const;
+    // Target perturbation computed this tick from agitation sine waves.
+    // Smoothed toward CurrentAngularPerturbation over multiple frames.
+    FRotator AccumulatedAngularPerturbation = FRotator::ZeroRotator;
+
+    // Per-instance random phase offsets so submarines in proximity don't
+    // heave/roll in perfect synchrony. Set once in BeginPlay via FRandRange.
+    float HeavePhaseOffset = 0.f;
+    float RollPhaseOffset = 0.f;
+    float PitchPhaseOffset = 0.f;
+
+    // -----------------------------------------------------------------------
+    //  Debug
+    // -----------------------------------------------------------------------
+
+    float PhysicsLogTimer = 0.f;
+
+    // -----------------------------------------------------------------------
+    //  Force computation (called from TickComponent)
+    // -----------------------------------------------------------------------
+
+    FVector ComputeGravityForce()  const;
     FVector ComputeBuoyancyForce() const;
-    FVector ComputeDragForce() const;
-    FVector ComputeDragForceSimple() const;
-    FVector ComputeDragForceTensor() const;
+    FVector ComputeDragForce()     const;
+    FVector ComputeDragForceSimple()  const;
+    FVector ComputeDragForceTensor()  const;
     FVector ComputeDepthPressureForce() const;
     FVector ComputeThrustForce(const FVector& OwnerForward) const;
+    FVector ComputeAgitationForce(const USubmarineCharacteristics* Stats);
 
-    float GetWaterSurfaceZ() const;
+    // -----------------------------------------------------------------------
+    //  Helpers (extracted from TickComponent for readability)
+    // -----------------------------------------------------------------------
 
-    const USubmarineCharacteristics* GetStats() const;
+    // Updates bIsNearSurface and NearSurfaceAlpha from current depth.
+    void UpdateNearSurfaceState(float DeltaTime,
+        const USubmarineCharacteristics* Stats);
+
+    // Smooths CurrentAngularPerturbation toward the target, applies recovery,
+    // clamps, and resets the accumulator.
+    void UpdateAngularPerturbation(float DeltaTime,
+        const USubmarineCharacteristics* Stats);
+
+    // Throttled physics debug log. Extracted to keep TickComponent readable.
+    void LogPhysicsState(float DeltaTime, const USubmarineCharacteristics* Stats,
+        float WaterZ,
+        const FVector& GravForce, const FVector& BuoyForce,
+        const FVector& DragForce, const FVector& DepthForce,
+        const FVector& ThrustForce, const FVector& TotalForce);
 };

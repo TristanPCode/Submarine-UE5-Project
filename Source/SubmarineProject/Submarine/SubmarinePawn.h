@@ -6,6 +6,7 @@
 #include "SubmarineTorpedoComponent.h"
 #include "RadarComponent.h"
 #include "TrackableSubmarine.h"
+#include "OceanSubsystem.h"
 #include "SubmarinePawn.generated.h"
 
 // -- Forward declarations ---------------------------------------------------
@@ -29,6 +30,9 @@ class SUBMARINEPROJECT_API ASubmarinePawn : public APawn, public ITrackableSubma
 
 public:
     ASubmarinePawn();
+    virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+    virtual void PossessedBy(AController* NewController) override;
+    virtual void UnPossessed() override;
 
     // -- External velocity accessors (used by collision component) ------------
     float GetExternalLinearVelocity() { return ExternalLinearVelocity; }
@@ -213,6 +217,7 @@ public:
     virtual float              GetHealthRatio()          const override;
     virtual float              GetCurrentSpeed()         const override;
     virtual float              GetCurrentDepth()         const override;
+    virtual float              GetDisplayDepth()         const override;
     virtual float              GetCurrentPitch()         const override;
     virtual int32              GetVerticalStateIndex()   const override;
     virtual int32              GetVerticalStateCount()   const override;

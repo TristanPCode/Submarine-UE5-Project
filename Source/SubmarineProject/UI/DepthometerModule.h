@@ -27,6 +27,6 @@ protected:
     {
         if (!IsValid(DataSource.GetObject())) return 0.f;
         // Clamp to 0: depth is always positive (above surface = 0, not negative)
-        return FMath::Max(0.f, DataSource->GetCurrentDepth());
+        return DataSource->GetDisplayDepth();
     }
 };

@@ -2,7 +2,10 @@
 
 #include "SubmarinePhysicsComponent.h"
 #include "SubmarineCharacteristics.h"
+#include "OceanSubsystem.h"
 #include "GameFramework/Actor.h"
+#include "Engine/World.h"
+#include "Engine/GameInstance.h"
 
 USubmarinePhysicsComponent::USubmarinePhysicsComponent()
 {
@@ -15,6 +18,12 @@ void USubmarinePhysicsComponent::BeginPlay()
 {
     Super::BeginPlay();
     PhysicsVelocity = FVector::ZeroVector;
+
+    // Randomize agitation phase offsets so submarines in the same area
+    // don't heave/roll in perfect synchrony -- each gets its own phase.
+    HeavePhaseOffset = FMath::FRandRange(0.f, 2.f * PI);
+    RollPhaseOffset = FMath::FRandRange(0.f, 2.f * PI);
+    PitchPhaseOffset = FMath::FRandRange(0.f, 2.f * PI);
 }
 
 // -----------------------------------------------------------------------------
@@ -31,68 +40,48 @@ void USubmarinePhysicsComponent::TickComponent(float DeltaTime, ELevelTick TickT
     const USubmarineCharacteristics* Stats = GetStats();
     if (!Stats) return;
 
-    // Update depth
+    // -------------------------------------------------------------------------
+    //  Water surface query + depth state
+    // -------------------------------------------------------------------------
     const float WaterZ = GetWaterSurfaceZ();
     CurrentDepth = WaterZ - Owner->GetActorLocation().Z;
     bAboveSurface = (CurrentDepth < 0.f);
 
-    // Compute each force separately for logging
+    // -------------------------------------------------------------------------
+    //  Near-surface alpha
+    // -------------------------------------------------------------------------
+    UpdateNearSurfaceState(DeltaTime, Stats);
+
+    // -------------------------------------------------------------------------
+    //  Core forces
+    // -------------------------------------------------------------------------
     const FVector GravForce = ComputeGravityForce();
     const FVector BuoyForce = ComputeBuoyancyForce();
     const FVector DragForce = ComputeDragForce();
     const FVector DepthForce = Stats->bEnableDepthPhysics ? ComputeDepthPressureForce() : FVector::ZeroVector;
     const FVector ThrustForce = ComputeThrustForce(Owner->GetActorForwardVector());
+    const FVector AgitationForce = ComputeAgitationForce(Stats);
 
-    // Accumulate forces
-    FVector TotalForce = GravForce + BuoyForce + DragForce + DepthForce + ThrustForce;
+    // -------------------------------------------------------------------------
+    //  Angular perturbation smoothing
+    // -------------------------------------------------------------------------
+    UpdateAngularPerturbation(DeltaTime, Stats);
+
+    // -------------------------------------------------------------------------
+    //  Integrate
+    // -------------------------------------------------------------------------
+    FVector TotalForce = GravForce + BuoyForce + DragForce + DepthForce + ThrustForce + AgitationForce;
     TotalForce += AccumulatedForces;
     AccumulatedForces = FVector::ZeroVector;
 
-    // Debug log every 2 seconds
-    static float LogTimer = 0.f;
-    LogTimer += DeltaTime;
-    if (LogTimer >= Stats->PhysicsLogFrequency && Stats->bEnablePhysicsLogs)
-    {
-        LogTimer = 0.f;
-        UE_LOG(LogTemp, Warning, TEXT("========= [PhysicsComponent] ========="));
-        UE_LOG(LogTemp, Warning, TEXT("  DA ptr valid   : %s"),
-            Characteristics ? TEXT("YES") : TEXT("NO - using CDO defaults!"));
-        UE_LOG(LogTemp, Warning, TEXT("  WaterSurfaceZ  : %.1f  (from DA: %.1f)"),
-            WaterZ, Stats->WaterSurfaceZ);
-        UE_LOG(LogTemp, Warning, TEXT("  SubmarineZ     : %.1f"), Owner->GetActorLocation().Z);
-        UE_LOG(LogTemp, Warning, TEXT("  CurrentDepth   : %.1f  (%s)"),
-            CurrentDepth, bAboveSurface ? TEXT("ABOVE water") : TEXT("SUBMERGED"));
-        UE_LOG(LogTemp, Warning, TEXT("  --- Forces (Z axis) ---"));
-        UE_LOG(LogTemp, Warning, TEXT("  Gravity        : %.2f  (DA GravityAccel=%.1f)"),
-            GravForce.Z, Stats->GravityAcceleration);
-        UE_LOG(LogTemp, Warning, TEXT("  Buoyancy       : %.2f  (DA BuoyancyRatio=%.2f, SubmersionFactor=%.2f)"),
-            BuoyForce.Z, Stats->BuoyancyRatio,
-            bAboveSurface ? 0.f : FMath::Clamp(CurrentDepth / FMath::Max(Stats->SurfaceTransitionDepth, 1.f), 0.f, 1.f));
-        UE_LOG(LogTemp, Warning, TEXT("  Drag Z         : %.2f  (ComplexDrag=%s)"),
-            DragForce.Z, Stats->bUseComplexDrag ? TEXT("ON") : TEXT("OFF"));
-        UE_LOG(LogTemp, Warning, TEXT("  DepthPressure  : %.2f  (Enabled=%s)"),
-            DepthForce.Z, Stats->bEnableDepthPhysics ? TEXT("ON") : TEXT("OFF"));
-        UE_LOG(LogTemp, Warning, TEXT("  ThrustZ        : %.2f  (TargetLinear=%.1f)"),
-            ThrustForce.Z, TargetLinearSpeed);
-        UE_LOG(LogTemp, Warning, TEXT("  --- Result ---"));
-        UE_LOG(LogTemp, Warning, TEXT("  TotalForce Z   : %.2f"), TotalForce.Z);
-        UE_LOG(LogTemp, Warning, TEXT("  PhysVelocity Z : %.2f"), PhysicsVelocity.Z);
-        UE_LOG(LogTemp, Warning, TEXT("  PhysVelocity   : (%.1f, %.1f, %.1f)"),
-            PhysicsVelocity.X, PhysicsVelocity.Y, PhysicsVelocity.Z);
-        UE_LOG(LogTemp, Warning, TEXT("======================================"));
-    }
+    LogPhysicsState(DeltaTime, Stats, WaterZ, GravForce, BuoyForce, DragForce, DepthForce, ThrustForce, TotalForce);
 
-    // -- Integrate forces -> velocity ---------------------------------------
     PhysicsVelocity += TotalForce * DeltaTime;
-
-    // Apply impulses (instant velocity change)
     PhysicsVelocity += AccumulatedImpulse;
     AccumulatedImpulse = FVector::ZeroVector;
 
-    // Expose net vertical acceleration for SubmarinePawn blending
     NetVerticalAcceleration = TotalForce.Z;
 
-    // -- Clamp to prevent runaway (safety) ---------------------------------
     const float MaxSpeed = Stats->PhysicsMaxSpeed;
     if (PhysicsVelocity.SizeSquared() > MaxSpeed * MaxSpeed)
         PhysicsVelocity = PhysicsVelocity.GetSafeNormal() * MaxSpeed;
@@ -119,7 +108,6 @@ FVector USubmarinePhysicsComponent::ComputeGravityForce() const
     const USubmarineCharacteristics* Stats = GetStats();
     if (!Stats) return FVector::ZeroVector;
 
-    // Only apply gravity below surface (above surface handled separately)
     // Gravity is always downward world Z
     return FVector(0.f, 0.f, -Stats->GravityAcceleration);
 }
@@ -168,9 +156,30 @@ FVector USubmarinePhysicsComponent::ComputeDragForce() const
     const USubmarineCharacteristics* Stats = GetStats();
     if (!Stats) return FVector::ZeroVector;
 
-    return Stats->bUseComplexDrag
+    FVector BaseDrag = Stats->bUseComplexDrag
         ? ComputeDragForceTensor()
         : ComputeDragForceSimple();
+
+    // Regional drag modifier (DA-gated).
+    // Murky/storm regions can increase drag slightly.
+    // Scales with the submarine's position via OceanSubsystem blending.
+    if (Stats->bEnableRegionalDrag)
+    {
+        AActor* Owner = GetOwner();
+        if (Owner)
+        {
+            UGameInstance* GI = Owner->GetGameInstance();
+            UOceanSubsystem* OceanSys = GI ? GI->GetSubsystem<UOceanSubsystem>() : nullptr;
+            if (OceanSys)
+            {
+                const float RegionalMult = OceanSys->GetRegionalDragMultiplierAt(
+                    Owner->GetActorLocation());
+                BaseDrag *= RegionalMult;
+            }
+        }
+    }
+
+    return BaseDrag;
 }
 
 // -----------------------------------------------------------------------------
@@ -251,9 +260,17 @@ FVector USubmarinePhysicsComponent::ComputeThrustForce(const FVector& OwnerForwa
     const USubmarineCharacteristics* Stats = GetStats();
     if (!Stats) return FVector::ZeroVector;
 
+    // Surface speed bonus
+    float EffectiveTargetSpeed = TargetLinearSpeed;
+    if (Stats->bEnableSurfaceSpeedBonus && NearSurfaceAlpha > 0.f)
+    {
+        const float Multiplier = FMath::Lerp(1.f, Stats->SurfaceSpeedBonus, NearSurfaceAlpha);
+        EffectiveTargetSpeed *= Multiplier;
+    }
+
     // Only drive linear (forward/backward) speed via thrust
     const float CurrentLinear = FVector::DotProduct(PhysicsVelocity, OwnerForward);
-    const float LinearError = TargetLinearSpeed - CurrentLinear;
+    const float LinearError = EffectiveTargetSpeed - CurrentLinear;
 
     const float LinearGain = (LinearError >= 0.f)
         ? Stats->LinearAcceleration
@@ -266,17 +283,223 @@ FVector USubmarinePhysicsComponent::ComputeThrustForce(const FVector& OwnerForwa
     return LinearThrust;
 }
 
+// ---------------------------------------------------------------------------
+//  ComputeAgitationForce
+//  Returns the heave (vertical bobbing) force from ocean wave agitation.
+//  Only non-zero when near the surface. Sets the angular perturbation target
+//  as a side effect (stored in AccumulatedAngularPerturbation).
+// ---------------------------------------------------------------------------
+FVector USubmarinePhysicsComponent::ComputeAgitationForce(
+    const USubmarineCharacteristics* Stats)
+{
+    if (!bIsNearSurface || NearSurfaceAlpha <= 0.f) return FVector::ZeroVector;
+
+    // Query blended agitation from ocean subsystem.
+    float AgitationIntensity = 0.f;
+    AActor* Owner = GetOwner();
+    if (Owner)
+    {
+        UGameInstance* GI = Owner->GetGameInstance();
+        if (GI)
+        {
+            UOceanSubsystem* OceanSys = GI->GetSubsystem<UOceanSubsystem>();
+            if (OceanSys)
+                AgitationIntensity = OceanSys->GetAgitationAtPosition(Owner->GetActorLocation());
+        }
+    }
+
+    const float AgitationScale = AgitationIntensity
+        * NearSurfaceAlpha
+        * Stats->AgitationPhysicsScale;
+
+    if (AgitationScale <= SMALL_NUMBER) return FVector::ZeroVector;
+
+    const float T = GetWorld()->GetTimeSeconds();
+
+    // Heave: two-frequency sine sum for organic, non-mechanical feel.
+    const float HeavePrimary = FMath::Sin(T * Stats->AgitationHeaveFrequency * 2.f * PI
+        + HeavePhaseOffset);
+    const float HeaveSecondary = FMath::Sin(T * Stats->AgitationHeaveFrequency * 2.f * PI * 1.73f
+        + HeavePhaseOffset + 1.1f) * 0.3f;
+    const float HeaveForce = (HeavePrimary + HeaveSecondary)
+        * AgitationScale * Stats->AgitationHeaveAmplitude;
+
+    // Angular perturbation target (roll + pitch).
+    // Stored for UpdateAngularPerturbation to smooth in the next step.
+    const float RollTarget = FMath::Sin(T * Stats->AgitationRollFrequency * 2.f * PI
+        + RollPhaseOffset)
+        * AgitationScale * Stats->AgitationRollAmplitude;
+    const float PitchTarget = FMath::Sin(T * Stats->AgitationPitchFrequency * 2.f * PI
+        + PitchPhaseOffset)
+        * AgitationScale * Stats->AgitationPitchAmplitude;
+
+    AccumulatedAngularPerturbation = FRotator(PitchTarget, 0.f, RollTarget);
+
+    return FVector(0.f, 0.f, HeaveForce);
+}
+
+// ---------------------------------------------------------------------------
+//  UpdateNearSurfaceState
+//  Computes bIsNearSurface and NearSurfaceAlpha from current depth.
+//  Uses blended regional water height (already in CurrentDepth) -- NOT
+//  instantaneous wave peaks -- so the state does not flicker with troughs.
+// ---------------------------------------------------------------------------
+void USubmarinePhysicsComponent::UpdateNearSurfaceState(float DeltaTime,
+    const USubmarineCharacteristics* Stats)
+{
+    const float TargetAlpha = (!bAboveSurface && CurrentDepth <= Stats->NearSurfaceThreshold)
+        ? FMath::Clamp(1.f - CurrentDepth / FMath::Max(Stats->NearSurfaceThreshold, 1.f), 0.f, 1.f)
+        : 0.f;
+
+    NearSurfaceAlpha = FMath::FInterpTo(NearSurfaceAlpha, TargetAlpha,
+        DeltaTime, Stats->NearSurfaceTransitionRate);
+    bIsNearSurface = (NearSurfaceAlpha > 0.01f);
+}
+
+
+
+// ---------------------------------------------------------------------------
+//  UpdateAngularPerturbation
+//  Smooths the perturbation accumulator toward CurrentAngularPerturbation,
+//  applies auto-recovery when submerged, and hard-clamps the result.
+// ---------------------------------------------------------------------------
+void USubmarinePhysicsComponent::UpdateAngularPerturbation(float DeltaTime,
+    const USubmarineCharacteristics* Stats)
+{
+    // Smooth toward the target set this frame by ComputeAgitationForce.
+    CurrentAngularPerturbation = FMath::RInterpTo(
+        CurrentAngularPerturbation,
+        AccumulatedAngularPerturbation,
+        DeltaTime, Stats->AngularPerturbationInterpRate);
+
+    // Auto-recover to zero when fully submerged.
+    if (!bIsNearSurface)
+    {
+        CurrentAngularPerturbation = FMath::RInterpTo(
+            CurrentAngularPerturbation,
+            FRotator::ZeroRotator,
+            DeltaTime, Stats->AngularRecoveryRate);
+    }
+
+    // Hard clamp — designer-set maximum angles.
+    CurrentAngularPerturbation.Roll = FMath::Clamp(CurrentAngularPerturbation.Roll,
+        -Stats->MaxRollPerturbation, Stats->MaxRollPerturbation);
+    CurrentAngularPerturbation.Pitch = FMath::Clamp(CurrentAngularPerturbation.Pitch,
+        -Stats->MaxPitchPerturbation, Stats->MaxPitchPerturbation);
+
+    // Reset accumulator -- repopulated next tick if near surface.
+    AccumulatedAngularPerturbation = FRotator::ZeroRotator;
+}
+
 // -----------------------------------------------------------------------------
 //  Helpers
 // -----------------------------------------------------------------------------
+
+// Redirected to UOceanSubsystem for authoritative water height.
+// The subsystem query is position-aware and region-blended.
+// Falls back to the DataAsset WaterSurfaceZ if the subsystem is unavailable
+// (e.g. during early init or if GameInstance is not configured).
 float USubmarinePhysicsComponent::GetWaterSurfaceZ() const
 {
-    const USubmarineCharacteristics* Stats = GetStats();
-    return Stats ? Stats->WaterSurfaceZ : 0.f;
+    AActor* Owner = GetOwner();
+    if (!Owner)
+    {
+        const USubmarineCharacteristics* Stats = GetStats();
+        return Stats ? Stats->WaterSurfaceZ : 0.f;
+    }
+
+    UWorld* World = Owner->GetWorld();
+    UGameInstance* GI = World ? World->GetGameInstance() : nullptr;
+    if (!GI)
+    {
+        const USubmarineCharacteristics* Stats = GetStats();
+        return Stats ? Stats->WaterSurfaceZ : 0.f;
+    }
+
+    UOceanSubsystem* OceanSys = GI->GetSubsystem<UOceanSubsystem>();
+    if (!OceanSys)
+    {
+        const USubmarineCharacteristics* Stats = GetStats();
+        return Stats ? Stats->WaterSurfaceZ : 0.f;
+    }
+
+    const FVector ActorPos = Owner->GetActorLocation();
+
+    // Canonical surface query: regional base + primary (octave 0) Gerstner.
+    // This uses the SAME formula and constants the material uses for Oct1,
+    // so physics and visuals ride the identical primary wave.
+    const float Time = World->GetTimeSeconds();
+    const FOceanSurfaceSample Surf = OceanSys->QuerySurface(
+        FVector2D(ActorPos.X, ActorPos.Y), Time);
+
+    // QuerySurface returns the FULL-amplitude surface. We keep the existing
+    // NearSurfaceAlpha gameplay behavior unchanged: deep submarines feel a
+    // reduced wave. The primary wave offset is scaled by NearSurfaceAlpha
+    // here (force/geometry coupling preserved as before).
+    if (!bIsNearSurface)
+    {
+        // Deep: no wave contribution, just the regional base.
+        return Surf.RegionalBaseHeight;
+    }
+
+    return Surf.RegionalBaseHeight + Surf.PrimaryWaveOffset * NearSurfaceAlpha;
 }
 
 const USubmarineCharacteristics* USubmarinePhysicsComponent::GetStats() const
 {
     if (Characteristics) return Characteristics;
     return GetDefault<USubmarineCharacteristics>();
+}
+
+//  GetDisplayDepth
+float USubmarinePhysicsComponent::GetDisplayDepth() const
+{
+    const USubmarineCharacteristics* Stats = GetStats();
+    const float UIOffset = Stats ? Stats->NearSurfaceDepthUIOffset : 0.f;
+    return FMath::Max(0.f, CurrentDepth + UIOffset);
+}
+
+
+// ---------------------------------------------------------------------------
+//  LogPhysicsState
+//  Throttled debug log. Extracted from TickComponent to keep tick clean.
+// ---------------------------------------------------------------------------
+void USubmarinePhysicsComponent::LogPhysicsState(float DeltaTime,
+    const USubmarineCharacteristics* Stats,
+    float WaterZ,
+    const FVector& GravForce, const FVector& BuoyForce,
+    const FVector& DragForce, const FVector& DepthForce,
+    const FVector& ThrustForce, const FVector& TotalForce)
+{
+    PhysicsLogTimer += DeltaTime;
+    if (PhysicsLogTimer < Stats->PhysicsLogFrequency || !Stats->bEnablePhysicsLogs)
+        return;
+
+    PhysicsLogTimer = 0.f;
+    AActor* Owner = GetOwner();
+
+    UE_LOG(LogTemp, Warning, TEXT("========= [PhysicsComponent] ========="));
+    UE_LOG(LogTemp, Warning, TEXT("  DA ptr valid   : %s"),
+        Characteristics ? TEXT("YES") : TEXT("NO - using CDO defaults!"));
+    UE_LOG(LogTemp, Warning, TEXT("  WaterSurfaceZ  : %.1f  (from DA: %.1f)"),
+        WaterZ, Stats->WaterSurfaceZ);
+    UE_LOG(LogTemp, Warning, TEXT("  SubmarineZ     : %.1f"),
+        Owner ? Owner->GetActorLocation().Z : 0.f);
+    UE_LOG(LogTemp, Warning, TEXT("  CurrentDepth   : %.1f  (%s)"),
+        CurrentDepth, bAboveSurface ? TEXT("ABOVE water") : TEXT("SUBMERGED"));
+    UE_LOG(LogTemp, Warning, TEXT("  NearSurface    : %s  Alpha=%.2f"),
+        bIsNearSurface ? TEXT("YES") : TEXT("NO"), NearSurfaceAlpha);
+    UE_LOG(LogTemp, Warning, TEXT("  AngPerturb     : Roll=%.2f  Pitch=%.2f"),
+        CurrentAngularPerturbation.Roll, CurrentAngularPerturbation.Pitch);
+    UE_LOG(LogTemp, Warning, TEXT("  --- Forces (Z axis) ---"));
+    UE_LOG(LogTemp, Warning, TEXT("  Gravity        : %.2f"), GravForce.Z);
+    UE_LOG(LogTemp, Warning, TEXT("  Buoyancy       : %.2f"), BuoyForce.Z);
+    UE_LOG(LogTemp, Warning, TEXT("  Drag Z         : %.2f"), DragForce.Z);
+    UE_LOG(LogTemp, Warning, TEXT("  DepthPressure  : %.2f"), DepthForce.Z);
+    UE_LOG(LogTemp, Warning, TEXT("  ThrustZ        : %.2f  (TargetLinear=%.1f)"),
+        ThrustForce.Z, TargetLinearSpeed);
+    UE_LOG(LogTemp, Warning, TEXT("  TotalForce Z   : %.2f"), TotalForce.Z);
+    UE_LOG(LogTemp, Warning, TEXT("  PhysVelocity   : (%.1f, %.1f, %.1f)"),
+        PhysicsVelocity.X, PhysicsVelocity.Y, PhysicsVelocity.Z);
+    UE_LOG(LogTemp, Warning, TEXT("======================================"));
 }

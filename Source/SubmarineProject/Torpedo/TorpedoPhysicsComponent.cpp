@@ -2,7 +2,10 @@
 
 #include "TorpedoPhysicsComponent.h"
 #include "TorpedoCharacteristics.h"
+#include "OceanSubsystem.h"
 #include "GameFramework/Actor.h"
+#include "Engine/World.h"
+#include "Engine/GameInstance.h"
 
 UTorpedoPhysicsComponent::UTorpedoPhysicsComponent()
 {
@@ -43,6 +46,13 @@ void UTorpedoPhysicsComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
     const float WaterZ = GetWaterSurfaceZ();
     CurrentDepth = WaterZ - Owner->GetActorLocation().Z;
     bAboveSurface = (CurrentDepth < 0.f);
+
+    // Near-surface state for wake VFX
+    // Threshold is 500 UU -- torpedoes are fast and this keeps surface
+    // effects tight to the actual surface zone. No smoothing needed here
+    // since torpedo wake systems just need a binary gate, not a blend alpha.
+    constexpr float TorpedoNearSurfaceThreshold = 500.f;
+    bIsNearSurface = (!bAboveSurface && CurrentDepth <= TorpedoNearSurfaceThreshold);
 
     // Accumulate forces
     const FVector TotalForce =
@@ -94,7 +104,26 @@ FVector UTorpedoPhysicsComponent::ComputeDragForce() const
 {
     const UTorpedoCharacteristics* Stats = GetStats();
     if (!Stats || PhysicsVelocity.IsNearlyZero()) return FVector::ZeroVector;
-    return -PhysicsVelocity * Stats->DragCoefficient;
+
+    FVector BaseDrag = -PhysicsVelocity * Stats->DragCoefficient;
+
+    // Regional drag modifier (Phase 6.3 — only if region DA enables torpedo drag).
+    // Lightweight: torpedoes are fast and numerous, so we skip this if the region
+    // doesn't explicitly affect torpedoes (bAffectTorpedoes flag on the DA).
+    AActor* Owner = GetOwner();
+    if (Owner)
+    {
+        UGameInstance* GI = Owner->GetGameInstance();
+        UOceanSubsystem* OceanSys = GI ? GI->GetSubsystem<UOceanSubsystem>() : nullptr;
+        if (OceanSys)
+        {
+            const float RegionalMult = OceanSys->GetRegionalDragMultiplierAt(
+                Owner->GetActorLocation(), /*bTorpedoQuery=*/true);
+            BaseDrag *= RegionalMult;
+        }
+    }
+
+    return BaseDrag;
 }
 
 // -----------------------------------------------------------------------------
@@ -121,8 +150,28 @@ FVector UTorpedoPhysicsComponent::ComputeThrustForce() const
 // -----------------------------------------------------------------------------
 //  Helpers
 // -----------------------------------------------------------------------------
+// 
+// Redirected to UOceanSubsystem for authoritative water height.
+// Torpedoes and submarines always query the same water authority.
+// Falls back to the DataAsset WaterSurfaceZ if the subsystem is unavailable.
 float UTorpedoPhysicsComponent::GetWaterSurfaceZ() const
 {
+    AActor* Owner = GetOwner();
+    if (Owner)
+    {
+        UWorld* World = Owner->GetWorld();
+        UGameInstance* GI = World ? World->GetGameInstance() : nullptr;
+        if (GI)
+        {
+            UOceanSubsystem* OceanSys = GI->GetSubsystem<UOceanSubsystem>();
+            if (OceanSys)
+            {
+                return OceanSys->GetWaterHeightAtPosition(Owner->GetActorLocation());
+            }
+        }
+    }
+
+    // Fallback: Old behavior using the DataAsset scalar.
     const UTorpedoCharacteristics* Stats = GetStats();
     return Stats ? Stats->WaterSurfaceZ : 0.f;
 }

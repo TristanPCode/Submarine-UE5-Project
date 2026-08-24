@@ -71,11 +71,11 @@ void ASubmarineGameMode::BeginPlay()
     }
 
     // Resolve runtime match settings
-    USubmarineGameInstance* SGI =
-        Cast<USubmarineGameInstance>(GetGameInstance());
+    USubmarineGameInstance* SGI = Cast<USubmarineGameInstance>(GetGameInstance());
 
     if (SGI && SGI->GetRuntimeMatchSettings())
     {
+        bIsReplayMode = SGI->bStartInReplayMode;
         ActiveRMS = SGI->GetRuntimeMatchSettings();
         UE_LOG(LogTemp, Log,
             TEXT("[GameMode] Using RuntimeMatchSettings from GameInstance"));

@@ -88,7 +88,6 @@ public:
 
     // -----------------------------------------------------------------------
     //  Death flow
-    //  Call this from your submarine Blueprint or from OnDied delegate
     // -----------------------------------------------------------------------
 
     /**
@@ -198,14 +197,6 @@ public:
     // Stored here temporarily until a menu/GameInstance flow exists.
     UPROPERTY()
     TObjectPtr<URuntimeMatchSettings> ActiveRMS;
-    /**
-     * If true, BeginPlay skips normal gameplay spawn and instead loads
-     * the saved replay from DeathReplaySaveSlot.
-     * Set this in BP_SubmarineGameInstance OR toggle here directly for testing.
-     * Will be set to false by BeginPlay after it's consumed.
-     */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Replay")
-    bool bIsReplayMode = false;
 
 private:
 
@@ -259,6 +250,7 @@ private:
     float LoadingScreenStartTime = 0.f;
 
     /* Replay Mode */
+    bool bIsReplayMode = false;
 
     /** Enter replay mode: load replay from disk, skip spawning, set HUD context. */
     void EnterReplayMode();
