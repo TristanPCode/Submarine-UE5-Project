@@ -16,8 +16,8 @@ class UInfoBillboardContextSettings;
  *
  * Resolution order for any HUD context:
  *   1. RuntimeMatchSettings->HUDContextOverrides[Context]   (match-specific override)
- *   2. UHUDGlobalDefaults->DefaultsPerContext[Context]       (this asset — global default)
- *   3. Log error — context has no registered HUD
+ *   2. UHUDGlobalDefaults->DefaultsPerContext[Context]       (this asset - global default)
+ *   3. Log error - context has no registered HUD
  *
  * Typical setup:
  *   Gameplay            -> DA_HUD_Gameplay_Solo
@@ -44,7 +44,7 @@ public:
 
     /**
      * Resolve the HUD settings for a given context.
-     * Returns nullptr if no entry exists (valid — means "no HUD").
+     * Returns nullptr if no entry exists (valid - means "no HUD").
      */
     USubmarineHUDSettings* Resolve(EHUDContext Context) const
     {

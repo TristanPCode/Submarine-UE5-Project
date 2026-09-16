@@ -18,7 +18,7 @@ class UHUDGlobalDefaults;
  * Lifecycle:
  *   1. Created via CreateFromDataAsset() before or during menu flow.
  *   2. Menu system may modify any field freely.
- *   3. USpawnManagerComponent reads this at match start — never mutates it.
+ *   3. USpawnManagerComponent reads this at match start - never mutates it.
  *   4. USubmarineAssetLoader reads this to collect assets to preload.
  *
  * The original UMatchSettingsDataAsset is NEVER touched at runtime.
@@ -37,7 +37,7 @@ public:
 
     /**
      * Create a runtime instance by copying all values from a DataAsset.
-     * The DataAsset is not referenced after this call — only values are copied.
+     * The DataAsset is not referenced after this call - only values are copied.
      */
     UFUNCTION(BlueprintCallable, Category = "MatchSettings",
         meta = (DeterminesOutputType = "Outer"))

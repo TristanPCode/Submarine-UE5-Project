@@ -16,7 +16,7 @@ UReplayGhostComponent::UReplayGhostComponent()
 }
 
 // ---------------------------------------------------------------------------
-//  BeginPlay — tag the owning actor as ReplayDynamic
+//  BeginPlay - tag the owning actor as ReplayDynamic
 // ---------------------------------------------------------------------------
 void UReplayGhostComponent::BeginPlay()
 {
@@ -37,7 +37,7 @@ void UReplayGhostComponent::BeginPlay()
     if (!S) return;
     if (S->bLogReplayGhost) {
         UE_LOG(LogTemp, Log,
-            TEXT("[ReplayGhost] BeginPlay on '%s' — found %d StaticMeshComponents:"),
+            TEXT("[ReplayGhost] BeginPlay on '%s' - found %d StaticMeshComponents:"),
             *Owner->GetName(), AllMeshes.Num());
 
         for (UStaticMeshComponent* M : AllMeshes)
@@ -61,7 +61,7 @@ void UReplayGhostComponent::CloneComponentsOntoGhost(AActor* TargetGhost) const
 
     CopyStaticMeshComponents(TargetGhost);
     CopyNiagaraComponents(TargetGhost);
-    CopyExtraComponents(TargetGhost);   // future hook — does nothing by default
+    CopyExtraComponents(TargetGhost);   // future hook - does nothing by default
 
     // Force the ghost actor visible: the source actor may be hidden
     // (e.g. dead submarine after FreezeOnDeath sets SetActorHiddenInGame(true)).
@@ -82,11 +82,11 @@ void UReplayGhostComponent::CloneComponentsOntoGhost(AActor* TargetGhost) const
 //
 //  Returns true for mesh components that should NOT be copied onto ghosts:
 //
-//  1. CameraProxyMeshComponent — UE5 adds these automatically for every
+//  1. CameraProxyMeshComponent - UE5 adds these automatically for every
 //     UCameraComponent. They have the MatineeCam_SM asset assigned.
 //     They are purely editor/debug aids and must not appear in-game on ghosts.
 //
-//  2. UCameraComponent subclasses — shouldn't be UStaticMeshComponent but
+//  2. UCameraComponent subclasses - shouldn't be UStaticMeshComponent but
 //     guard anyway.
 //
 //  We filter by component name prefix "CameraProxyMeshComponent" which is
@@ -141,16 +141,16 @@ void UReplayGhostComponent::CopyStaticMeshComponents(AActor* Target) const
     {
         if (S->bLogReplayGhost) {
             UE_LOG(LogTemp, Warning,
-                TEXT("[ReplayGhost] No StaticMeshComponents found on '%s' — ghost will be invisible"),
+                TEXT("[ReplayGhost] No StaticMeshComponents found on '%s' - ghost will be invisible"),
                 *Source->GetName());
         }
         return;
     }
 
-    // The ghost root — we'll create it from the first valid mesh
+    // The ghost root - we'll create it from the first valid mesh
     USceneComponent* GhostRoot = Target->GetRootComponent();
 
-    // Source actor root transform — used to compute each mesh's offset
+    // Source actor root transform - used to compute each mesh's offset
     // relative to the actor origin, which we then apply on the ghost
     const FTransform SourceRootTransform = Source->GetActorTransform();
     int32 CopiedCount = 0;

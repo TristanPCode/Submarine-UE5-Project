@@ -103,10 +103,10 @@ public:
     /**
      * Two-phase rotation contact detection for in-place yaw/pitch.
      *
-     * Phase 1 — Box overlap (fast): uses SubmarineBody's mesh bounds.
+     * Phase 1 - Box overlap (fast): uses SubmarineBody's mesh bounds.
      *   Quickly finds candidate actors overlapping the hull AABB.
      *
-     * Phase 2 — Mesh overlap (accurate): for each candidate from Phase 1,
+     * Phase 2 - Mesh overlap (accurate): for each candidate from Phase 1,
      *   runs ComponentOverlapComponent against the actual physics body.
      *   Eliminates false positives from the AABB corners.
      *

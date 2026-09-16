@@ -48,7 +48,7 @@ static UScreenFadeComponent* GetPlayerFade(APlayerController* PC)
 }
 
 // ---------------------------------------------------------------------------
-//  BeginPlay — wire delegates and propagate settings
+//  BeginPlay - wire delegates and propagate settings
 // ---------------------------------------------------------------------------
 void ASubmarineGameMode::BeginPlay()
 {
@@ -474,9 +474,9 @@ void ASubmarineGameMode::OnSubmarineDied(ASubmarinePawn* DeadSubmarine,
     APlayerController* DeadPC = Cast<APlayerController>(DeadController);
     if (!DeadPC || !DeadPC->IsLocalPlayerController())
     {
-        // CPU or remote player — just destroy the pawn cleanly
+        // CPU or remote player - just destroy the pawn cleanly
         UE_LOG(LogTemp, Log,
-            TEXT("[GameMode] OnSubmarineDied: '%s' is CPU/remote — "
+            TEXT("[GameMode] OnSubmarineDied: '%s' is CPU/remote - "
                 "skipping death sequence"),
             DeadSubmarine ? *DeadSubmarine->GetName() : TEXT("NULL"));
         if (DeadSubmarine)
@@ -501,7 +501,7 @@ void ASubmarineGameMode::OnSubmarineDied(ASubmarinePawn* DeadSubmarine,
 
     if (!DeadSubmarine || !DeadController || !GetWorld())
     {
-        UE_LOG(LogTemp, Warning, TEXT("[GameMode] OnSubmarineDied — invalid params, aborting"));
+        UE_LOG(LogTemp, Warning, TEXT("[GameMode] OnSubmarineDied - invalid params, aborting"));
         return;
     }
 
@@ -510,7 +510,7 @@ void ASubmarineGameMode::OnSubmarineDied(ASubmarinePawn* DeadSubmarine,
         !DeathSequence->OnDeathSequenceComplete.IsBound())
     {
         UE_LOG(LogTemp, Warning,
-            TEXT("[GameMode] OnDeathSequenceComplete was not bound — binding now (BeginPlay may have been skipped)"));
+            TEXT("[GameMode] OnDeathSequenceComplete was not bound - binding now (BeginPlay may have been skipped)"));
         DeathSequence->OnDeathSequenceComplete.AddDynamic(
             this, &ASubmarineGameMode::OnDeathSequenceComplete);
     }
@@ -558,7 +558,7 @@ void ASubmarineGameMode::OnSubmarineDied(ASubmarinePawn* DeadSubmarine,
     }
     else
     {
-        UE_LOG(LogTemp, Log, TEXT("[GameMode] No killer — environmental death"));
+        UE_LOG(LogTemp, Log, TEXT("[GameMode] No killer - environmental death"));
     }
 
     const UReplaySettings* RS = ReplaySettings
@@ -727,7 +727,7 @@ void ASubmarineGameMode::OnPostDeathRecordingComplete()
 
     if (!DC || !GetWorld())
     {
-        UE_LOG(LogTemp, Warning, TEXT("[GameMode] OnPostDeathRecordingComplete — controller gone"));
+        UE_LOG(LogTemp, Warning, TEXT("[GameMode] OnPostDeathRecordingComplete - controller gone"));
         return;
     }
 
@@ -738,7 +738,7 @@ void ASubmarineGameMode::OnPostDeathRecordingComplete()
 
     // ------------------------------------------------------------------
     //  Resolve killer for death cam.
-    //  If it was a torpedo: torpedo is gone — use the firing submarine.
+    //  If it was a torpedo: torpedo is gone - use the firing submarine.
     //  If it was a submarine: use that submarine directly.
     //  Environmental: nullptr (StaticBehindDead mode will be used).
     // ------------------------------------------------------------------
@@ -750,7 +750,7 @@ void ASubmarineGameMode::OnPostDeathRecordingComplete()
             ? PendingKillerInfo.KillerSubmarine.Get() : nullptr;
 
         UE_LOG(LogTemp, Log,
-            TEXT("[GameMode] Torpedo '%s' gone — using firing sub '%s' for death cam"),
+            TEXT("[GameMode] Torpedo '%s' gone - using firing sub '%s' for death cam"),
             *PendingKillerInfo.ActorName,
             KillerForDeathSeq ? *KillerForDeathSeq->GetName() : TEXT("also gone"));
     }
@@ -845,7 +845,7 @@ void ASubmarineGameMode::OnPostDeathRecordingComplete()
     }
     else
     {
-        UE_LOG(LogTemp, Warning, TEXT("[GameMode] No DeathSequence — skipping to spectator"));
+        UE_LOG(LogTemp, Warning, TEXT("[GameMode] No DeathSequence - skipping to spectator"));
         OnDeathSequenceComplete();
     }
 }
@@ -859,7 +859,7 @@ void ASubmarineGameMode::OnPostDeathRecordingComplete()
 //  - Screen may be black from the DeathReplayFade fade-out
 //
 //  We spawn the spectator and do a SpectatorFade fade-in.
-//  We do NOT do another fade-out here — that would double-fade.
+//  We do NOT do another fade-out here - that would double-fade.
 // ---------------------------------------------------------------------------
 void ASubmarineGameMode::OnDeathSequenceComplete()
 {
@@ -870,7 +870,7 @@ void ASubmarineGameMode::OnDeathSequenceComplete()
 
     if (!DC || !GetWorld())
     {
-        UE_LOG(LogTemp, Warning, TEXT("[GameMode] OnDeathSequenceComplete — controller invalid, skipping spectator spawn"));
+        UE_LOG(LogTemp, Warning, TEXT("[GameMode] OnDeathSequenceComplete - controller invalid, skipping spectator spawn"));
         return;
     }
 
@@ -903,7 +903,7 @@ void ASubmarineGameMode::OnDeathSequenceComplete()
 
     APlayerController* PC = Cast<APlayerController>(DC);
 
-    // Spawn spectator immediately — no extra fade-out here.
+    // Spawn spectator immediately - no extra fade-out here.
     // The DeathReplayFade already faded to black at the end of the replay.
     // SpectatorFade will fade-in from that black state.
     TArray<ASubmarinePawn*> AllSubs;
@@ -949,7 +949,7 @@ void ASubmarineGameMode::OnDeathSequenceComplete()
         TWeakObjectPtr<URuntimeMatchSettings> WeakRMS(ActiveRMS);
         const bool bSpectIsSplit = ActiveRMS && ActiveRMS->bSplitScreenEnabled && ActiveRMS->LocalPlayerCount >= 2;
 
-        // Capture AllSubs for the lambda — avoids world scan racing
+        // Capture AllSubs for the lambda - avoids world scan racing
         TArray<TWeakObjectPtr<ASubmarinePawn>> WeakAllSubs;
         for (ASubmarinePawn* S : AllSubs) WeakAllSubs.Add(S);
 

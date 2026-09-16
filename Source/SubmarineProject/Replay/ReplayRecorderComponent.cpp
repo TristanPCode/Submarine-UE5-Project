@@ -71,7 +71,7 @@ void UReplayRecorderComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
         RecordKeyframe(Now);
     }
 
-    // Rolling trim — drop frames older than MaxRecordDuration
+    // Rolling trim - drop frames older than MaxRecordDuration
     if (S->MaxRecordDuration > 0.f)
     {
         const float Cutoff = Now - S->MaxRecordDuration;
@@ -158,7 +158,7 @@ bool UReplayRecorderComponent::SaveReplay(const FString& Label)
         LiveReplay, S->ReplaySaveSlot, S->SaveUserIndex);
 
     if (S->bLogReplayRecorder) {
-        UE_LOG(LogTemp, Log, TEXT("[ReplayRecorder] SaveReplay %s — slot=%s"),
+        UE_LOG(LogTemp, Log, TEXT("[ReplayRecorder] SaveReplay %s - slot=%s"),
             bOk ? TEXT("OK") : TEXT("FAILED"), *S->ReplaySaveSlot);
     }
 
@@ -176,13 +176,13 @@ bool UReplayRecorderComponent::LoadReplay()
     if (!LoadedReplay)
     {
         if (S->bLogReplayRecorder) {
-            UE_LOG(LogTemp, Warning, TEXT("[ReplayRecorder] LoadReplay failed — slot=%s"), *S->ReplaySaveSlot);
+            UE_LOG(LogTemp, Warning, TEXT("[ReplayRecorder] LoadReplay failed - slot=%s"), *S->ReplaySaveSlot);
         }
         return false;
     }
 
     if (S->bLogReplayRecorder) {
-        UE_LOG(LogTemp, Log, TEXT("[ReplayRecorder] LoadReplay OK — duration=%.1fs, TickFrames=%d"),
+        UE_LOG(LogTemp, Log, TEXT("[ReplayRecorder] LoadReplay OK - duration=%.1fs, TickFrames=%d"),
             LoadedReplay->GetDuration(), LoadedReplay->TickFrames.Num());
     }
     return true;
@@ -546,7 +546,7 @@ FReplayActorFrame UReplayRecorderComponent::BuildActorFrame(AActor* Actor) const
 
 FReplayActorSnapshot UReplayRecorderComponent::BuildActorSnapshot(AActor* Actor) const
 {
-    // Snapshot has the same fields as Frame — copy from frame
+    // Snapshot has the same fields as Frame - copy from frame
     const FReplayActorFrame F = BuildActorFrame(Actor);
     FReplayActorSnapshot S;
     S.Location = F.Location;

@@ -12,7 +12,7 @@ class USubmarineTorpedoComponent;
 class UNiagaraSystem;
 
 // -----------------------------------------------------------------------
-//  One ghost actor entry — one per unique actor name in the replay slice
+//  One ghost actor entry - one per unique actor name in the replay slice
 // -----------------------------------------------------------------------
 USTRUCT()
 struct FGhostActorEntry
@@ -59,7 +59,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnReplayPlaybackFinished);
  *  GHOST SPAWNING
  *   For each unique actor name in the replay slice, one ghost AActor is spawned.
  *   If the live actor has a UReplayGhostComponent, CloneComponentsOntoGhost()
- *   is called — this copies StaticMesh + Niagara components with ghost-safe flags.
+ *   is called - this copies StaticMesh + Niagara components with ghost-safe flags.
  *   If no UReplayGhostComponent exists (fallback), StaticMeshComponents are
  *   copied directly so the ghost still looks correct.
  *
@@ -71,7 +71,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnReplayPlaybackFinished);
  *
  *  VISIBILITY (dead player only)
  *   Real dynamic actors (submarines, torpedoes, and any actor tagged
- *   "ReplayDynamic" — including standalone Niagara explosion actors)
+ *   "ReplayDynamic" - including standalone Niagara explosion actors)
  *   are hidden from the dead PlayerController via PC->HiddenActors.
  *   Other players are completely unaffected.
  *   All visibility changes are restored on StopPlayback.
@@ -145,7 +145,7 @@ public:
     AActor* GetKillerTorpedoGhost() const { return GetGhostForGuid(KillerTorpedoGuid); }
 
     // -----------------------------------------------------------------------
-    //  Context — set by DeathSequenceComponent before calling BeginPlayback
+    //  Context - set by DeathSequenceComponent before calling BeginPlayback
     // -----------------------------------------------------------------------
 
     /** GUID of the killer submarine (or firing submarine if killed by torpedo). */
@@ -183,7 +183,7 @@ private:
 
     TArray<FGhostActorEntry> GhostEntries;
 
-    /** Actors added to PC->HiddenActors — stored for restoration. */
+    /** Actors added to PC->HiddenActors - stored for restoration. */
     UPROPERTY()
     TArray<TObjectPtr<AActor>> HiddenActors;
 

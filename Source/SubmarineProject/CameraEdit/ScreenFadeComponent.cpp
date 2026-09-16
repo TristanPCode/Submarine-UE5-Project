@@ -465,7 +465,7 @@ void UScreenFadeComponent::Internal_StartFade(APlayerController* PC,
     if (!PC)
     {
         if (ShouldLog()) {
-            UE_LOG(LogTemp, Warning, TEXT("[ScreenFade] Internal_StartFade — null PC"));
+            UE_LOG(LogTemp, Warning, TEXT("[ScreenFade] Internal_StartFade - null PC"));
         }
         return;
     }
@@ -474,7 +474,7 @@ void UScreenFadeComponent::Internal_StartFade(APlayerController* PC,
     {
         if (ShouldLog()) {
             UE_LOG(LogTemp, Warning,
-                TEXT("[ScreenFade] Internal_StartFade — no PlayerCameraManager on PC='%s'"),
+                TEXT("[ScreenFade] Internal_StartFade - no PlayerCameraManager on PC='%s'"),
                 *PC->GetName());
         }
         return;

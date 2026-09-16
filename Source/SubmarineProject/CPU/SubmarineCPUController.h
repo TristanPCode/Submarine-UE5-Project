@@ -8,10 +8,10 @@
  * ASubmarineCPUController
  *
  * Controller for CPU-driven submarines.
- * Uses the EXACT SAME ASubmarinePawn as human players — only the controller
+ * Uses the EXACT SAME ASubmarinePawn as human players - only the controller
  * differs. This keeps all gameplay/physics/HUD/radar logic fully unified.
  *
- * Currently a stub — no AI behavior yet.
+ * Currently a stub - no AI behavior yet.
  * The architecture is in place for future USubmarineBrainComponent integration.
  *
  * Key rules enforced by this class:

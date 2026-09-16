@@ -58,7 +58,7 @@ void USubmarineTorpedoComponent::BeginPlay()
 }
 
 // -----------------------------------------------------------------------------
-//  Tick — handle shared cooldown + reload
+//  Tick - handle shared cooldown + reload
 // -----------------------------------------------------------------------------
 void USubmarineTorpedoComponent::TickComponent(float DeltaTime, ELevelTick TickType,
     FActorComponentTickFunction* ThisTickFunction)
@@ -102,7 +102,7 @@ void USubmarineTorpedoComponent::TickComponent(float DeltaTime, ELevelTick TickT
     }
 }
 // -----------------------------------------------------------------------------
-//  Progressive reload — one torpedo at a time, runs while below capacity
+//  Progressive reload - one torpedo at a time, runs while below capacity
 // -----------------------------------------------------------------------------
 void USubmarineTorpedoComponent::TickProgressiveReload(float DeltaTime)
 {
@@ -147,7 +147,7 @@ void USubmarineTorpedoComponent::TickProgressiveReload(float DeltaTime)
 }
 
 // -----------------------------------------------------------------------------
-//  Full reload — starts ONLY at 0, restores all at once
+//  Full reload - starts ONLY at 0, restores all at once
 // -----------------------------------------------------------------------------
 void USubmarineTorpedoComponent::TickFullReload(float DeltaTime)
 {
@@ -218,7 +218,7 @@ ATorpedoPawn* USubmarineTorpedoComponent::FireNormalTorpedo()
     if (!CanFire())
     {
         if (bDebugCooldownLogs) {
-            UE_LOG(LogTemp, Warning, TEXT("[TorpedoComp] Cannot fire — cooldown %.2fs remaining"),
+            UE_LOG(LogTemp, Warning, TEXT("[TorpedoComp] Cannot fire - cooldown %.2fs remaining"),
                 FireCooldownRemaining);
         }
         return nullptr;
@@ -226,7 +226,7 @@ ATorpedoPawn* USubmarineTorpedoComponent::FireNormalTorpedo()
     if (CurrentNormalTorpedoes <= 0)
     {
         if (bDebugCooldownLogs) {
-            UE_LOG(LogTemp, Warning, TEXT("[TorpedoComp] Cannot fire — no normal torpedoes"));
+            UE_LOG(LogTemp, Warning, TEXT("[TorpedoComp] Cannot fire - no normal torpedoes"));
         }
         return nullptr;
     }
@@ -281,7 +281,7 @@ ATorpedoPawn* USubmarineTorpedoComponent::FireSpecialTorpedo()
     if (!CanFire())
     {
         if (bDebugCooldownLogs) {
-            UE_LOG(LogTemp, Warning, TEXT("[TorpedoComp] Cannot fire — cooldown %.2fs remaining"),
+            UE_LOG(LogTemp, Warning, TEXT("[TorpedoComp] Cannot fire - cooldown %.2fs remaining"),
                 FireCooldownRemaining);
         }
         return nullptr;
@@ -289,7 +289,7 @@ ATorpedoPawn* USubmarineTorpedoComponent::FireSpecialTorpedo()
     if (CurrentSpecialTorpedoes <= 0)
     {
         if (bDebugCooldownLogs) {
-            UE_LOG(LogTemp, Warning, TEXT("[TorpedoComp] Cannot fire — no special torpedoes"));
+            UE_LOG(LogTemp, Warning, TEXT("[TorpedoComp] Cannot fire - no special torpedoes"));
         }
         return nullptr;
     }
@@ -325,7 +325,7 @@ ATorpedoPawn* USubmarineTorpedoComponent::FireSpecialTorpedo()
 }
 
 // -----------------------------------------------------------------------------
-//  SpawnTorpedo — shared deferred spawn logic
+//  SpawnTorpedo - shared deferred spawn logic
 // -----------------------------------------------------------------------------
 ATorpedoPawn* USubmarineTorpedoComponent::SpawnTorpedo(
     TSubclassOf<ATorpedoPawn> BlueprintClass,
@@ -386,7 +386,7 @@ ATorpedoPawn* USubmarineTorpedoComponent::SpawnTorpedo(
     //
     // The torpedo always FACES forward (SpawnRotation = OwnerSub->GetActorRotation()),
     // so negative initial speed means it briefly flies tail-first before the
-    // engine wins — exactly the behaviour you asked for.
+    // engine wins - exactly the behaviour you asked for.
 
     const float SpeedOffset = TorpedoDA ? TorpedoDA->InitialSpeedOffset : 1500.f;
 
@@ -396,7 +396,7 @@ ATorpedoPawn* USubmarineTorpedoComponent::SpawnTorpedo(
     // Total initial speed along the torpedo's (= submarine's) forward vector
     const float TotalInitialSpeed = SubLinearContribution + SpeedOffset;
 
-    // Apply purely along forward — no lateral/vertical bleed
+    // Apply purely along forward - no lateral/vertical bleed
     const FVector InitialVelocity = OwnerSub->GetActorForwardVector() * TotalInitialSpeed;
 
     Torpedo->SetInitialVelocity(InitialVelocity);

@@ -62,7 +62,7 @@ public:
 
     // -- Current state (read by SubmarinePawn) -----------------------------
 
-    /** Current physics velocity (world space, cm/s) — excludes player input thrust */
+    /** Current physics velocity (world space, cm/s) - excludes player input thrust */
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Submarine|Physics")
     FVector PhysicsVelocity = FVector::ZeroVector;
 

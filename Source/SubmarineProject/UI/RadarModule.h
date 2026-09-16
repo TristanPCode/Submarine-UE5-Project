@@ -99,7 +99,7 @@ protected:
     UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
     TObjectPtr<UCanvasPanel> EntitiesCanvas;
 
-    /** Cardinal direction ring — rotated each tick. */
+    /** Cardinal direction ring - rotated each tick. */
     UPROPERTY(BlueprintReadOnly, meta = (BindWidget))
     TObjectPtr<UImage> CardinalImage;
 

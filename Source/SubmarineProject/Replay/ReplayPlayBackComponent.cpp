@@ -35,7 +35,7 @@ void UReplayPlaybackComponent::BeginPlayback(UReplayData* Slice,
     if (bPlaying)
     {
         if (S->bLogReplayPlayback) {
-            UE_LOG(LogTemp, Warning, TEXT("[ReplayPlayback] Already playing — stopping first"));
+            UE_LOG(LogTemp, Warning, TEXT("[ReplayPlayback] Already playing - stopping first"));
         }
         StopPlayback();
     }
@@ -43,7 +43,7 @@ void UReplayPlaybackComponent::BeginPlayback(UReplayData* Slice,
     if (!Slice || Slice->TickFrames.Num() == 0)
     {
         if (S->bLogReplayPlayback) {
-            UE_LOG(LogTemp, Warning, TEXT("[ReplayPlayback] Empty slice — aborting"));
+            UE_LOG(LogTemp, Warning, TEXT("[ReplayPlayback] Empty slice - aborting"));
         }
         return;
     }
@@ -84,9 +84,9 @@ void UReplayPlaybackComponent::StopPlayback()
     const UReplaySettings* S = GetSettings();
     if (!S) return;
     if (S->bLogReplayPlayback) {
-        // Log the call stack reason — was it a natural end or an external call ?
+        // Log the call stack reason - was it a natural end or an external call ?
         UE_LOG(LogTemp, Warning,
-            TEXT("[ReplayPlayback] StopPlayback CALLED — bPlaying=%d PlaybackTime=%.2f EndTime=%.2f"),
+            TEXT("[ReplayPlayback] StopPlayback CALLED - bPlaying=%d PlaybackTime=%.2f EndTime=%.2f"),
             bPlaying ? 1 : 0,
             PlaybackTime,
             ActiveSlice ? ActiveSlice->RecordEndTime : -1.f);
@@ -360,7 +360,7 @@ AActor* UReplayPlaybackComponent::SpawnGhostForActor(AActor* RealActor,
         }
     }
 
-    if (!RealActor) return Ghost; // no mesh to copy — positional anchor only
+    if (!RealActor) return Ghost; // no mesh to copy - positional anchor only
 
     // Prefer UReplayGhostComponent for future-proof cloning
     UReplayGhostComponent* GhostComp =
@@ -378,7 +378,7 @@ AActor* UReplayPlaybackComponent::SpawnGhostForActor(AActor* RealActor,
         if (!S) return nullptr;
         if (S->bLogReplayPlayback) {
             UE_LOG(LogTemp, Verbose,
-                TEXT("[ReplayPlayback] No ReplayGhostComponent on '%s' — using fallback mesh copy"),
+                TEXT("[ReplayPlayback] No ReplayGhostComponent on '%s' - using fallback mesh copy"),
                 *RealActor->GetName());
         }
         FallbackCopyStaticMeshes(RealActor, Ghost);
@@ -464,7 +464,7 @@ void UReplayPlaybackComponent::DestroyGhosts()
 // ---------------------------------------------------------------------------
 //  HideRealActorsForDeadPlayer
 //
-//  Uses APlayerController::HiddenActors — a per-player TSet built into UE.
+//  Uses APlayerController::HiddenActors - a per-player TSet built into UE.
 //  Actors added here are skipped during rendering for that one PC only.
 //  Other players see everything normally.
 //
@@ -485,7 +485,7 @@ void UReplayPlaybackComponent::HideRealActorsForDeadPlayer()
     if (!PC && S->bLogReplayPlayback)
     {
         UE_LOG(LogTemp, Warning,
-            TEXT("[ReplayPlayback] HideRealActors — no PlayerController, skipping"));
+            TEXT("[ReplayPlayback] HideRealActors - no PlayerController, skipping"));
         return;
     }
 
@@ -623,7 +623,7 @@ void UReplayPlaybackComponent::TickGhostPositions()
         }
         else
         {
-            // No frame at this time — hold last known
+            // No frame at this time - hold last known
             E.GhostActor->SetActorLocationAndRotation(E.LastKnownLocation, E.LastKnownRotation);
         }
     }

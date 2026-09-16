@@ -6,7 +6,7 @@
 #include "ReplaySettings.generated.h"
 
 // -----------------------------------------------------------------------
-//  Screen fade settings — one struct reused for all three game phases
+//  Screen fade settings - one struct reused for all three game phases
 // -----------------------------------------------------------------------
 USTRUCT(BlueprintType)
 struct FScreenFadeSettings
@@ -106,7 +106,7 @@ struct FScreenFadeSettings
  *
  * Recording architecture:
  *   - Every tick a lightweight FReplayTickFrame is stored per tracked actor
- *     (position, rotation, speeds, health, ammo counts — delta friendly).
+ *     (position, rotation, speeds, health, ammo counts - delta friendly).
  *   - Every FullSnapshotInterval seconds a full FReplaySnapshot "keyframe"
  *     is stored so playback can always find a clean starting point.
  *   - On playback, the system jumps to the nearest earlier keyframe then
@@ -149,7 +149,7 @@ public:
      * How many tick-frames are recorded per second.
      * Lower = lighter memory, coarser playback (position pops).
      * Higher = smoother playback, heavier memory.
-     * Does NOT need to match the game tick rate — recording is
+     * Does NOT need to match the game tick rate - recording is
      * throttled to this rate independently.
      * Recommended: 20–30 fps.
      */

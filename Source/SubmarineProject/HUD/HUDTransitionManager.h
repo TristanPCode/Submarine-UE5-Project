@@ -14,7 +14,7 @@ class ASubmarinePawn;
  * UHUDTransitionManager
  *
  * Attach to APlayerController (alongside USubmarineHUDComponent).
- * One instance per local player — never shared.
+ * One instance per local player - never shared.
  *
  * Responsibilities:
  *   - Track current EHUDContext
@@ -31,7 +31,7 @@ class ASubmarinePawn;
  *
  * Important design rule:
  *   HUD context is PRESENTATION state, not gameplay state.
- *   Systems call TransitionToContext explicitly — it is never auto-triggered.
+ *   Systems call TransitionToContext explicitly - it is never auto-triggered.
  *   Gameplay systems (GameMode, death sequence) call this when appropriate.
  *
  * Split-screen safety:

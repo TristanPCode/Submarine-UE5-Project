@@ -46,7 +46,7 @@ void USubmarineCharacteristics::PostInitProperties()
         // Other submarines: strong bounce, moderate damage
         CollisionBounceTable.Add({ ESubmarineCollisionType::OtherSubmarine, 900.f, 0.5f, false, 0.5f, 0.5f, 0.2f, 2, 15.f });
 
-        // Torpedo: force only — damage handled by torpedo's AttackDamage
+        // Torpedo: force only - damage handled by torpedo's AttackDamage
         CollisionBounceTable.Add({ ESubmarineCollisionType::Torpedo, 600.f, 0.4f, false, 0.4f, 0.4f, 0.1f, 1, 0.f });
 
         // Trigger zones: no bounce, no damage

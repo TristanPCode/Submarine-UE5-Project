@@ -70,7 +70,7 @@ public:
     void SetInitialVelocity(const FVector& WorldVelocity);
 
     // -- Shooter -----------------------------------------------------------
-    /** The Shooter actor that fired this torpedo — never detonates on them */
+    /** The Shooter actor that fired this torpedo - never detonates on them */
     UPROPERTY()
     TObjectPtr<AActor> FiringShooter;
 

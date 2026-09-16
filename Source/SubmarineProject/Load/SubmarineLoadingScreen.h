@@ -58,7 +58,7 @@ public:
 
 protected:
 
-    // BindWidget — optional, may be absent in Blueprint
+    // BindWidget - optional, may be absent in Blueprint
     UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional))
     TObjectPtr<UImage> BackgroundImage;
 

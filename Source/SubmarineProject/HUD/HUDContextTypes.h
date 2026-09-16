@@ -17,12 +17,12 @@
  * Context -> HUD DataAsset resolution order:
  *   1. RuntimeMatchSettings->HUDContextOverrides[Context]
  *   2. UHUDGlobalDefaults->DefaultsPerContext[Context]
- *   3. Error — no HUD loaded for this context
+ *   3. Error - no HUD loaded for this context
  */
 UENUM(BlueprintType)
 enum class EHUDContext : uint8
 {
-    /** No HUD — used during loading, before match starts. */
+    /** No HUD - used during loading, before match starts. */
     None,
 
     /** Standard single-player gameplay. */
@@ -40,7 +40,7 @@ enum class EHUDContext : uint8
     /** Full replay playback mode. */
     Replay,
 
-    /** Death replay — short clip showing the killing blow. */
+    /** Death replay - short clip showing the killing blow. */
     DeathReplay,
 
     /** Split-screen two-player death replay (reduced screen space). */
@@ -49,6 +49,6 @@ enum class EHUDContext : uint8
     /** Main menu or lobby (future). */
     MainMenu,
 
-    /** Cutscene / cinematic — HUD typically hidden or minimal. */
+    /** Cutscene / cinematic - HUD typically hidden or minimal. */
     Cinematic
 };

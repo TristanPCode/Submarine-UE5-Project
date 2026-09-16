@@ -4,7 +4,7 @@
 
 ASubmarineCPUController::ASubmarineCPUController()
 {
-    // No tick needed at this stage — no behavior
+    // No tick needed at this stage - no behavior
     PrimaryActorTick.bCanEverTick = false;
 
     // Future: Brain = CreateDefaultSubobject<USubmarineBrainComponent>(TEXT("Brain"));

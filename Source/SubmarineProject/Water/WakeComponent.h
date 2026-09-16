@@ -26,9 +26,9 @@ enum class EWakeLOD : uint8;
 //    (owned by the same pawn) to get speed and near-surface state.
 //
 //  Niagara systems used:
-//    NS_SubmarineWake  — ribbon trail behind the submarine at the surface
-//    NS_SubmarineFoam  — foam/spray chunks spawned at the surface
-//    NS_SurfacePulse   — one-shot burst when submarine breaches the surface
+//    NS_SubmarineWake  - ribbon trail behind the submarine at the surface
+//    NS_SubmarineFoam  - foam/spray chunks spawned at the surface
+//    NS_SurfacePulse   - one-shot burst when submarine breaches the surface
 //
 //  All Niagara systems expose these user parameters (set each tick by this
 //  component):

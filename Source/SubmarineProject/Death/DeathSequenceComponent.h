@@ -53,7 +53,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnDeathSequenceComplete);
  *   1. BeginDeathSequence is called AFTER DeathPreviewDelay has elapsed
  *      (GameMode waits for the timer before calling this). The replay slice
  *      already contains the explosion VFX frames.
- *   2. Replay playback starts immediately (no pre-delay phase here —
+ *   2. Replay playback starts immediately (no pre-delay phase here -
  *      the pre-delay was the GameMode timer).
  *   3. Ghost actors drive the camera for DeathCamWallClockDuration seconds
  *      (= SliceSeconds / PlaybackSpeed).
@@ -71,7 +71,7 @@ public:
         FActorComponentTickFunction* ThisTickFunction) override;
 
     // -----------------------------------------------------------------------
-    //  API — call from GameMode when a submarine dies
+    //  API - call from GameMode when a submarine dies
     // -----------------------------------------------------------------------
 
     /**
@@ -164,7 +164,7 @@ private:
     // -----------------------------------------------------------------------
     EDeathCamMode DetermineDeathCamMode(AActor* Killer) const;
 
-    // Fade timers — scheduled in StartDeathCam, cosmetic only
+    // Fade timers - scheduled in StartDeathCam, cosmetic only
     FTimerHandle FadeInTimerHandle;
     FTimerHandle FadeOutTimerHandle;
 

@@ -53,7 +53,7 @@ void ASubmarineSpectatorPawn::InitSpectator(const TArray<ASubmarinePawn*>& AllSu
 
     if (Live.Num() == 0)
     {
-        // No live submarines — place at fallback
+        // No live submarines - place at fallback
         CurrentSubTarget = nullptr;
         CurrentTorpedoTarget = nullptr;
         bWatchingTorpedo = false;
@@ -133,7 +133,7 @@ void ASubmarineSpectatorPawn::Tick(float DeltaTime)
 
     if (!bCameraInitialised)
     {
-        // First frame — snap to wherever the target is, no blend
+        // First frame - snap to wherever the target is, no blend
         CurrentCamLocation = TargetLoc;
         CurrentCamRotation = TargetRot;
         bCameraInitialised = true;
@@ -178,7 +178,7 @@ void ASubmarineSpectatorPawn::Tick(float DeltaTime)
     }
     else
     {
-        // Path 3: No blend active — snap directly to target.
+        // Path 3: No blend active - snap directly to target.
         // Orbit lag is already handled above via SpectatorOrbit* lerp,
         // so 3rd person orbit movement feels smooth without this path
         // contributing any extra latency.
@@ -217,7 +217,7 @@ void ASubmarineSpectatorPawn::TickHoldInput(FHoldInput& Input, float DeltaTime,
 }
 
 // ---------------------------------------------------------------------------
-//  Subject switch — Pressed/Released
+//  Subject switch - Pressed/Released
 // ---------------------------------------------------------------------------
 void ASubmarineSpectatorPawn::SpectatorLeftPressed()
 {
@@ -272,7 +272,7 @@ void ASubmarineSpectatorPawn::SpectatorDownReleased()
 }
 
 // ---------------------------------------------------------------------------
-//  Camera toggle — Pressed/Released
+//  Camera toggle - Pressed/Released
 // ---------------------------------------------------------------------------
 void ASubmarineSpectatorPawn::SpectatorCameraTogglePressed()
 {
@@ -289,7 +289,7 @@ void ASubmarineSpectatorPawn::SpectatorCameraToggleReleased()
 //  Single-fire switch actions (also called internally by hold system)
 // ---------------------------------------------------------------------------
 
-//  Input — Left / Right (cycle submarines)
+//  Input - Left / Right (cycle submarines)
 void ASubmarineSpectatorPawn::SpectatorLeft()
 {
     TArray<ASubmarinePawn*> Live = GetLiveSubmarines();
@@ -340,7 +340,7 @@ void ASubmarineSpectatorPawn::SpectatorRight()
     }
 }
 
-//  Input — Up / Down (cycle [submarine, torpedo0, torpedo1, ...])
+//  Input - Up / Down (cycle [submarine, torpedo0, torpedo1, ...])
 void ASubmarineSpectatorPawn::SpectatorUp()
 {
     if (!CurrentSubTarget) return;
@@ -392,7 +392,7 @@ void ASubmarineSpectatorPawn::SpectatorDown()
 }
 
 // -----------------------------------------------------------------------------
-//  Mouse / zoom input — 3rd person only, POV is always static
+//  Mouse / zoom input - 3rd person only, POV is always static
 // -----------------------------------------------------------------------------
 void ASubmarineSpectatorPawn::SpectatorMouseX(float AxisValue)
 {
@@ -420,7 +420,7 @@ void ASubmarineSpectatorPawn::SpectatorScrollZoom(float AxisValue)
 }
 
 // ---------------------------------------------------------------------------
-//  DoToggleCameraMode — internal, starts the camera-mode blend
+//  DoToggleCameraMode - internal, starts the camera-mode blend
 // ---------------------------------------------------------------------------
 void ASubmarineSpectatorPawn::DoToggleCameraMode()
 {
@@ -443,7 +443,7 @@ void ASubmarineSpectatorPawn::DoToggleCameraMode()
 }
 
 // -----------------------------------------------------------------------------
-//  GetTargetCameraTransform — dispatches to POV or 3rd person
+//  GetTargetCameraTransform - dispatches to POV or 3rd person
 // -----------------------------------------------------------------------------
 void ASubmarineSpectatorPawn::GetTargetCameraTransform(FVector& OutLocation,
     FRotator& OutRotation) const
@@ -492,7 +492,7 @@ void ASubmarineSpectatorPawn::GetTargetCameraTransform(FVector& OutLocation,
 }
 
 // -----------------------------------------------------------------------------
-//  GetThirdPersonTransform — orbits around the current target
+//  GetThirdPersonTransform - orbits around the current target
 // -----------------------------------------------------------------------------
 void ASubmarineSpectatorPawn::GetThirdPersonTransform(FVector& OutLocation,
     FRotator& OutRotation) const
@@ -526,7 +526,7 @@ void ASubmarineSpectatorPawn::ApplyCurrentTarget()
 
     if (Live.Num() == 0)
     {
-        // No submarines alive — fallback camera
+        // No submarines alive - fallback camera
         CurrentSubTarget = nullptr;
         CurrentTorpedoTarget = nullptr;
         bWatchingTorpedo = false;
@@ -563,7 +563,7 @@ void ASubmarineSpectatorPawn::ApplyCurrentTarget()
 }
 
 // -----------------------------------------------------------------------------
-//  ValidateTorpedoTarget — called every tick
+//  ValidateTorpedoTarget - called every tick
 // -----------------------------------------------------------------------------
 void ASubmarineSpectatorPawn::ValidateTorpedoTarget()
 {
@@ -571,7 +571,7 @@ void ASubmarineSpectatorPawn::ValidateTorpedoTarget()
 
     if (!IsValid(CurrentTorpedoTarget))
     {
-        // Torpedo died — immediately revert to submarine, no blend needed
+        // Torpedo died - immediately revert to submarine, no blend needed
         CurrentTorpedoTarget = nullptr;
         bWatchingTorpedo = false;
         ViewListIndex = 0;
@@ -678,7 +678,7 @@ float ASubmarineSpectatorPawn::GetOrbitMoveBlendSpeed() const
 }
 
 // -----------------------------------------------------------------------------
-//  Orbit sensitivity helpers — fall back to sensible defaults if no DA
+//  Orbit sensitivity helpers - fall back to sensible defaults if no DA
 // -----------------------------------------------------------------------------
 float ASubmarineSpectatorPawn::GetOrbitYawSensitivity() const
 {

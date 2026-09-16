@@ -61,7 +61,7 @@ void URadarComponent::TriggerScan()
 {
     const URadarSettings* S = GetSettings();
 
-    // Enforce cooldown — one scan per press is already guaranteed by
+    // Enforce cooldown - one scan per press is already guaranteed by
     if (ScanCooldownRemaining > 0.f)
     {
         UE_LOG(LogTemp, Verbose,

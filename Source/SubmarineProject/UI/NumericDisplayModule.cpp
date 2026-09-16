@@ -361,7 +361,7 @@ bool UNumericDisplayModule::CreateDigitMIDs()
 //
 //  Converts a float value into individual digit integers.
 //  The decimal index determines where the implicit decimal point sits,
-//  but does NOT add an extra digit — it's purely for display.
+//  but does NOT add an extra digit - it's purely for display.
 //
 //  Example with DigitCount=4, DecimalIndex=3 (XXX.X):
 //    Value = 524.4 -> AsInt = 5244 (shift by number of fractional digits)

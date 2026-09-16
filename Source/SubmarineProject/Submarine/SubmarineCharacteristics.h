@@ -498,7 +498,7 @@ public:
 
     // -- Physics: General ----------------------
 
-    /** Gravity acceleration (cm/s²) — positive value, applied downward */
+    /** Gravity acceleration (cm/s²) - positive value, applied downward */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Physics|General")
     float GravityAcceleration = 980.f;
 
@@ -685,7 +685,7 @@ public:
 
     /**
      * Maximum roll angle (degrees) that wave agitation can apply.
-     * Hard clamped — the submarine will never exceed this regardless of
+     * Hard clamped - the submarine will never exceed this regardless of
      * agitation intensity. Recommended: 4 - 10.
      */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Surface|Agitation|Angular",

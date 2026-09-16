@@ -25,12 +25,12 @@ ATorpedoPawn::ATorpedoPawn()
     // but we'll ignore the specific firing submarine at spawn.
     TorpedoBody->SetCollisionProfileName(TEXT("BlockAll"));
 
-    // POV camera — attached to root, inherits torpedo rotation
+    // POV camera - attached to root, inherits torpedo rotation
     POVCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("CameraPOV"));
     POVCamera->SetupAttachment(RootComponent);
     POVCamera->bUsePawnControlRotation = false;
 
-    // 3rd person — detached at BeginPlay, positioned manually each tick
+    // 3rd person - detached at BeginPlay, positioned manually each tick
     ThirdPersonCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("CameraThirdPerson"));
     ThirdPersonCamera->SetupAttachment(RootComponent);
     ThirdPersonCamera->bUsePawnControlRotation = false;
@@ -63,8 +63,8 @@ void ATorpedoPawn::BeginPlay()
     TorpedoBody->OnComponentHit.AddDynamic(this, &ATorpedoPawn::OnTorpedoHit);
 
     // Make the torpedo pass completely through the firing submarine.
-    // This is the primary passthrough mechanism — does not rely on actor checks.
-    // Ignore firing submarine — called here AND at SetCharacteristics for safety
+    // This is the primary passthrough mechanism - does not rely on actor checks.
+    // Ignore firing submarine - called here AND at SetCharacteristics for safety
     if (IsValid(FiringShooter))
     {
         TorpedoBody->IgnoreActorWhenMoving(FiringShooter.Get(), true);
@@ -75,7 +75,7 @@ void ATorpedoPawn::BeginPlay()
     }
     else if (Stats->bDebugMainMessages)
     {
-        UE_LOG(LogTemp, Error, TEXT("[Torpedo] %s — FiringSubmarine is NULL at BeginPlay!"), *GetName());
+        UE_LOG(LogTemp, Error, TEXT("[Torpedo] %s - FiringSubmarine is NULL at BeginPlay!"), *GetName());
     }
 
 
@@ -111,7 +111,7 @@ void ATorpedoPawn::SetCharacteristics(UTorpedoCharacteristics* InCharacteristics
     if (PhysicsHandler)
         PhysicsHandler->Characteristics = Characteristics;
 
-    // Set ignore as early as possible — before FinishSpawning / BeginPlay
+    // Set ignore as early as possible - before FinishSpawning / BeginPlay
     if (IsValid(FiringShooter))
         TorpedoBody->IgnoreActorWhenMoving(FiringShooter.Get(), true);
 }
@@ -202,7 +202,7 @@ void ATorpedoPawn::Tick(float DeltaTime)
 }
 
 // -----------------------------------------------------------------------------
-//  Input (minimal — torpedo cameras can be mouse-driven if possessed)
+//  Input (minimal - torpedo cameras can be mouse-driven if possessed)
 // -----------------------------------------------------------------------------
 void ATorpedoPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
@@ -266,7 +266,7 @@ void ATorpedoPawn::OnTorpedoHit(UPrimitiveComponent* HitComp, AActor* OtherActor
 }
 
 // -----------------------------------------------------------------------------
-//  Explode — override in Blueprint for VFX/SFX
+//  Explode - override in Blueprint for VFX/SFX
 // -----------------------------------------------------------------------------
 void ATorpedoPawn::Explode_Implementation(AActor* DirectHitActor, const FVector& ImpactLocation)
 {
@@ -314,7 +314,7 @@ void ATorpedoPawn::Explode_Implementation(AActor* DirectHitActor, const FVector&
         if (Stats->bDebugHitLogs) {
             UE_LOG(LogTemp, Warning, TEXT("[Torpedo] Direct hit on %s | ColComp=%s"),
                 *DirectHitActor->GetName(),
-                ColComp ? TEXT("FOUND") : TEXT("NOT FOUND — no USubmarineCollisionComponent!"));
+                ColComp ? TEXT("FOUND") : TEXT("NOT FOUND - no USubmarineCollisionComponent!"));
         }
 
         if (ColComp)

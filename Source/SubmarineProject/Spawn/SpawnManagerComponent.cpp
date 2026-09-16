@@ -21,7 +21,7 @@ USpawnManagerComponent::USpawnManagerComponent()
 }
 
 // ---------------------------------------------------------------------------
-//  ResolveSpawnEntries  (Phase 1 — no spawning, just assignment)
+//  ResolveSpawnEntries  (Phase 1 - no spawning, just assignment)
 // ---------------------------------------------------------------------------
 void USpawnManagerComponent::ResolveSpawnEntries(
     URuntimeMatchSettings* RuntimeSettings)
@@ -456,7 +456,7 @@ void USpawnManagerComponent::ConfigureSplitScreen(bool bEnable)
 
     if (bEnable)
     {
-        // Force vertical (left/right) split — ESplitScreenType::TwoPlayer_Vertical
+        // Force vertical (left/right) split - ESplitScreenType::TwoPlayer_Vertical
         // UE5 stores split info in SplitscreenInfo array indexed by ESplitScreenType
         // We set the active type directly:
         Viewport->SetForceDisableSplitscreen(false);
@@ -499,7 +499,7 @@ APlayerController* USpawnManagerComponent::EnsureLocalPlayer(
         return World->GetFirstPlayerController();
     }
 
-    // Player 1+ — may need to create
+    // Player 1+ - may need to create
     // First check if it already exists
     for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
     {
@@ -611,7 +611,7 @@ void USpawnManagerComponent::InitializeHUDForPlayer(
     if (!HUDComp)
     {
         // SpawnManagerComponent should not add components to PlayerController
-        // at runtime — this is a setup error. Log it.
+        // at runtime - this is a setup error. Log it.
         UE_LOG(LogTemp, Warning,
             TEXT("[SpawnManager] InitializeHUDForPlayer: PC '%s' has no "
                 "USubmarineHUDComponent. Add it to your BP_PlayerController."),

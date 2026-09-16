@@ -84,7 +84,7 @@ public:
         meta = (ClampMin = "1", ClampMax = "2"))
     int32 LocalPlayerCount = 1;
 
-    /** Number of remote players (always 0 for now — future networking). */
+    /** Number of remote players (always 0 for now - future networking). */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Players",
         meta = (ClampMin = "0"))
     int32 RemotePlayerCount = 0;
@@ -214,7 +214,7 @@ public:
     bool bSplitScreenEnabled = false;
 
     // -----------------------------------------------------------------------
-    //  HUD context overrides (optional — fall back to UHUDGlobalDefaults)
+    //  HUD context overrides (optional - fall back to UHUDGlobalDefaults)
     // -----------------------------------------------------------------------
 
     /**

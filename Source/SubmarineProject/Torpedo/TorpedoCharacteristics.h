@@ -6,7 +6,7 @@
 #include "TorpedoCharacteristics.generated.h"
 
 // ---------------------------------------------
-//  Torpedo weight class — affects DA defaults
+//  Torpedo weight class - affects DA defaults
 //  and is exposed for Blueprint logic
 // ---------------------------------------------
 UENUM(BlueprintType)
@@ -84,7 +84,7 @@ public:
     float SurfaceTransitionDepth = 100.f;
 
     /**
-     * Simple drag coefficient — opposes velocity linearly.
+     * Simple drag coefficient - opposes velocity linearly.
      * F_drag = -Cd * v  (lighter than the sub; torpedoes are streamlined)
      */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Torpedo|Physics",

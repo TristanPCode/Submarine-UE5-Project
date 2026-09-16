@@ -51,7 +51,7 @@ void USubmarineCollisionComponent::ApplyDamage(float RawDamage, AActor* DamageCa
     if (bDead || CurrentHealth <= 0.f)
     {
         if (Stats->bLogCollisionComp) {
-            UE_LOG(LogTemp, Warning, TEXT("[CollisionComp] ApplyDamage ignored — already dead. Owner=%s"),
+            UE_LOG(LogTemp, Warning, TEXT("[CollisionComp] ApplyDamage ignored - already dead. Owner=%s"),
                 GetOwner() ? *GetOwner()->GetName() : TEXT("None"));
         }
         return;
@@ -76,7 +76,7 @@ void USubmarineCollisionComponent::ApplyDamage(float RawDamage, AActor* DamageCa
     {
         bDead = true;
         if (Stats->bLogCollisionComp) {
-            UE_LOG(LogTemp, Warning, TEXT("[CollisionComp] %s DIED — broadcasting OnDied"),
+            UE_LOG(LogTemp, Warning, TEXT("[CollisionComp] %s DIED - broadcasting OnDied"),
                 GetOwner() ? *GetOwner()->GetName() : TEXT("?"));
         }
         ASubmarinePawn* OwnerPawn = Cast<ASubmarinePawn>(GetOwner());
@@ -207,7 +207,7 @@ void USubmarineCollisionComponent::ProcessHit(const FHitResult& Hit, AActor* Oth
     const USubmarineCharacteristics* Stats = GetStats();
     if (!Stats) return;
 
-    // Torpedoes pass THROUGH the firing submarine — handled at spawn via IgnoreActor.
+    // Torpedoes pass THROUGH the firing submarine - handled at spawn via IgnoreActor.
     // If a torpedo somehow still reaches ProcessHit, skip bounce entirely.
     if (ColType == ESubmarineCollisionType::Torpedo)
     {
@@ -318,8 +318,8 @@ void USubmarineCollisionComponent::HandleHitFromBlueprint(const FHitResult& Hit)
 //  CheckRotationContactBP
 //  Two-phase contact detection for in-place yaw/pitch rotations.
 //
-//  Phase 1 — Box overlap using SubmarineBody's mesh AABB (fast broad phase).
-//  Phase 2 — ComponentOverlapComponent against each candidate's actual physics
+//  Phase 1 - Box overlap using SubmarineBody's mesh AABB (fast broad phase).
+//  Phase 2 - ComponentOverlapComponent against each candidate's actual physics
 //             body (accurate narrow phase, eliminates AABB corner false positives).
 //
 //  On confirmed contact: synthesises a FHitResult including ImpactPoint
@@ -352,7 +352,7 @@ void USubmarineCollisionComponent::CheckRotationContactBP(int32 RotationAxis)
     TArray<FOverlapResult> BoxOverlaps;
     FCollisionQueryParams BoxParams;
     BoxParams.AddIgnoredActor(OwnerPawn);
-    // Ghost actors skipped here — don't add them to query, just skip in loop
+    // Ghost actors skipped here - don't add them to query, just skip in loop
 
     World->OverlapMultiByChannel(
         BoxOverlaps,
@@ -398,7 +398,7 @@ void USubmarineCollisionComponent::CheckRotationContactBP(int32 RotationAxis)
         if (!bMeshContact) continue;
 
         // -----------------------------------------------------------------------
-        //  Confirmed contact — build a FHitResult with a meaningful ImpactPoint.
+        //  Confirmed contact - build a FHitResult with a meaningful ImpactPoint.
         //  We use the closest point on the other component's AABB to our centre
         //  as the ImpactPoint, giving ApplyBounce a real lever arm.
         // -----------------------------------------------------------------------
@@ -439,7 +439,7 @@ void USubmarineCollisionComponent::CheckRotationContactBP(int32 RotationAxis)
 }
 
 // -----------------------------------------------------------------------------
-//  RegisterHit — anti-stuck tracker
+//  RegisterHit - anti-stuck tracker
 // -----------------------------------------------------------------------------
 
 void USubmarineCollisionComponent::RegisterHit(AActor* OtherActor, const FHitResult& Hit)
@@ -470,7 +470,7 @@ void USubmarineCollisionComponent::RegisterHit(AActor* OtherActor, const FHitRes
 }
 
 // -----------------------------------------------------------------------------
-//  TickAntiStuck — moved from SubmarinePawn, called by RegisterHit
+//  TickAntiStuck - moved from SubmarinePawn, called by RegisterHit
 // -----------------------------------------------------------------------------
 
 void USubmarineCollisionComponent::TickAntiStuck()
@@ -704,7 +704,7 @@ void USubmarineCollisionComponent::TriggerDeathExplosion()
             true, true, ENCPoolMethod::None);
     }
 
-    // Splash damage — deduplicated by actor
+    // Splash damage - deduplicated by actor
     if (Stats->DeathExplosionRadius > 0.f)
     {
         TArray<FOverlapResult> Overlaps;

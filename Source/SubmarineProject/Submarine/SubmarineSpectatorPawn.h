@@ -17,8 +17,8 @@ class UCameraBlendSettings;
  * Owns a free-floating camera that blends toward the target submarine/torpedo.
  *
  * Navigation:
- *   Left / Right  — cycle through submarines
- *   Up   / Down   — cycle through [Submarine, Torpedo1, Torpedo2, ...] for
+ *   Left / Right  - cycle through submarines
+ *   Up   / Down   - cycle through [Submarine, Torpedo1, Torpedo2, ...] for
  *                   the currently watched submarine
  *
  * The spectator never modifies the cameras of observed submarines/torpedoes.
@@ -67,7 +67,7 @@ public:
     void RegisterSubmarine(ASubmarinePawn* Submarine);
 
     // -------------------------------------------------------------------------
-    //  Key cooldown settings — subject switch (Left/Right/Up/Down)
+    //  Key cooldown settings - subject switch (Left/Right/Up/Down)
     // -------------------------------------------------------------------------
 
     /**
@@ -85,7 +85,7 @@ public:
     float SwitchHoldCooldown = 0.25f;
 
     // -------------------------------------------------------------------------
-    //  Key cooldown settings — camera mode toggle (POV <-> 3rd person)
+    //  Key cooldown settings - camera mode toggle (POV <-> 3rd person)
     // -------------------------------------------------------------------------
 
     /**
@@ -114,7 +114,7 @@ public:
     FRotator SubjectSwitchBlendStartRot = FRotator::ZeroRotator;
 
     // -------------------------------------------------------------------------
-    //  Input callbacks — subject switch (Pressed/Released handle tap+hold)
+    //  Input callbacks - subject switch (Pressed/Released handle tap+hold)
     // -------------------------------------------------------------------------
 
     /**
@@ -153,7 +153,7 @@ public:
     void SpectatorDown();
 
     // -------------------------------------------------------------------------
-    //  Input — camera mode toggle (also uses hold+cooldown system)
+    //  Input - camera mode toggle (also uses hold+cooldown system)
     // -------------------------------------------------------------------------
 
     UFUNCTION(BlueprintCallable, Category = "Spectator|Input")
@@ -162,7 +162,7 @@ public:
     void SpectatorCameraToggleReleased();
 
     // -------------------------------------------------------------------------
-    //  Input — mouse / zoom (call every frame from your input binding)
+    //  Input - mouse / zoom (call every frame from your input binding)
     // -------------------------------------------------------------------------
 
     UFUNCTION(BlueprintCallable, Category = "Spectator|Input")
@@ -208,7 +208,7 @@ private:
     //  Submarine / torpedo list management
     // -------------------------------------------------------------------------
 
-    /** All tracked submarines (includes dead ones — filtered in GetLiveSubmarines) */
+    /** All tracked submarines (includes dead ones - filtered in GetLiveSubmarines) */
     UPROPERTY()
     TArray<TObjectPtr<ASubmarinePawn>> TrackedSubmarines;
 
@@ -313,7 +313,7 @@ private:
     /** Applies SubmarineListIndex + ViewListIndex, validates, falls back to empty cam */
     void ApplyCurrentTarget();
 
-    /** Called each tick — checks if CurrentTorpedoTarget died and reverts to submarine */
+    /** Called each tick - checks if CurrentTorpedoTarget died and reverts to submarine */
     void ValidateTorpedoTarget();
 
     /** Returns resolved blend speed for subject-switch, honouring BlendSettings. */

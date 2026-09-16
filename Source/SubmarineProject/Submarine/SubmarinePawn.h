@@ -260,7 +260,7 @@ private:
         meta = (AllowPrivateAccess = "true"))
     TObjectPtr<UCameraComponent> Camera;
 
-    /** Periscope camera — attached to root, rotates independently on yaw */
+    /** Periscope camera - attached to root, rotates independently on yaw */
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components",
         meta = (AllowPrivateAccess = "true"))
     TObjectPtr<UCameraComponent> PeriscopeCamera;
@@ -270,7 +270,7 @@ private:
     TObjectPtr<URadarComponent> RadarHandler;
 
     /**
-     * 3rd person camera — NOT attached to submarine root so it doesn't
+     * 3rd person camera - NOT attached to submarine root so it doesn't
      * inherit submarine rotation. Updated manually in Tick.
      */
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components",
@@ -439,6 +439,6 @@ private:
 
     // -- Helpers -----------------------------------------------------------
 
-    /** Safe accessor — returns Characteristics CDO if no asset assigned */
+    /** Safe accessor - returns Characteristics CDO if no asset assigned */
     const USubmarineCharacteristics* GetStats() const;
 };

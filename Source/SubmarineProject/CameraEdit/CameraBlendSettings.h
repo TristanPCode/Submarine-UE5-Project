@@ -11,9 +11,9 @@
  * Assign one instance to ASubmarineGameMode::CameraBlendSettings.
  *
  * Three independent blend scenarios:
- *   1. SubjectSwitch  — spectator changes which submarine/torpedo it watches
- *   2. CameraMode     — switching between POV / Periscope / 3rd person
- *   3. OrbitMove      — mouse orbit movement in 3rd person
+ *   1. SubjectSwitch  - spectator changes which submarine/torpedo it watches
+ *   2. CameraMode     - switching between POV / Periscope / 3rd person
+ *   3. OrbitMove      - mouse orbit movement in 3rd person
  *
  * A "blend all" master override is also available.
  */
@@ -41,7 +41,7 @@ public:
     float BlendAllSpeed = 6.f;
 
     // -----------------------------------------------------------------------
-    //  Scenario 1 — Subject switch (spectator cycles submarines / torpedoes)
+    //  Scenario 1 - Subject switch (spectator cycles submarines / torpedoes)
     // -----------------------------------------------------------------------
 
     /** Enable smooth blend when the spectator switches its watched target. */
@@ -54,7 +54,7 @@ public:
     float SubjectSwitchBlendSpeed = 5.f;
 
     // -----------------------------------------------------------------------
-    //  Scenario 2 — Camera mode change (POV <-> Periscope <-> 3rd person)
+    //  Scenario 2 - Camera mode change (POV <-> Periscope <-> 3rd person)
     // -----------------------------------------------------------------------
 
     /** Enable smooth blend when switching camera modes on a submarine. */
@@ -67,7 +67,7 @@ public:
     float CameraModeBlendSpeed = 8.f;
 
     // -----------------------------------------------------------------------
-    //  Scenario 3 — 3rd person orbit movement (mouse drag / zoom)
+    //  Scenario 3 - 3rd person orbit movement (mouse drag / zoom)
     // -----------------------------------------------------------------------
 
     /**

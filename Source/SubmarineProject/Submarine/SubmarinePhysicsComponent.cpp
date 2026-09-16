@@ -27,7 +27,7 @@ void USubmarinePhysicsComponent::BeginPlay()
 }
 
 // -----------------------------------------------------------------------------
-//  Main tick — integrate all forces into velocity
+//  Main tick - integrate all forces into velocity
 // -----------------------------------------------------------------------------
 void USubmarinePhysicsComponent::TickComponent(float DeltaTime, ELevelTick TickType,
     FActorComponentTickFunction* ThisTickFunction)
@@ -149,7 +149,7 @@ FVector USubmarinePhysicsComponent::ComputeBuoyancyForce() const
 }
 
 // -----------------------------------------------------------------------------
-//  Drag — dispatcher
+//  Drag - dispatcher
 // -----------------------------------------------------------------------------
 FVector USubmarinePhysicsComponent::ComputeDragForce() const
 {
@@ -183,7 +183,7 @@ FVector USubmarinePhysicsComponent::ComputeDragForce() const
 }
 
 // -----------------------------------------------------------------------------
-//  Simple drag — scalar, opposes velocity, proportional to speed²
+//  Simple drag - scalar, opposes velocity, proportional to speed²
 // -----------------------------------------------------------------------------
 FVector USubmarinePhysicsComponent::ComputeDragForceSimple() const
 {
@@ -197,7 +197,7 @@ FVector USubmarinePhysicsComponent::ComputeDragForceSimple() const
 }
 
 // -----------------------------------------------------------------------------
-//  Complex drag — 6DOF tensor
+//  Complex drag - 6DOF tensor
 //
 //  Drag is computed per local axis (forward, right, up) independently.
 //  Each axis has its own coefficient (forward = low, lateral/vertical = high).
@@ -246,13 +246,13 @@ FVector USubmarinePhysicsComponent::ComputeDepthPressureForce() const
 }
 
 // -----------------------------------------------------------------------------
-//  Thrust — PD controller
+//  Thrust - PD controller
 //
 //  Rather than setting velocity directly, we compute the force needed to
 //  reach TargetLinearSpeed and TargetVerticalSpeed. This preserves inertia
 //  and makes external perturbations (drag, buoyancy) interact naturally.
 //
-//  F_thrust = Kp * (target - current) — proportional term only
+//  F_thrust = Kp * (target - current) - proportional term only
 //  (derivative term is implicit via drag opposing overshoot)
 // -----------------------------------------------------------------------------
 FVector USubmarinePhysicsComponent::ComputeThrustForce(const FVector& OwnerForward) const
@@ -381,7 +381,7 @@ void USubmarinePhysicsComponent::UpdateAngularPerturbation(float DeltaTime,
             DeltaTime, Stats->AngularRecoveryRate);
     }
 
-    // Hard clamp — designer-set maximum angles.
+    // Hard clamp - designer-set maximum angles.
     CurrentAngularPerturbation.Roll = FMath::Clamp(CurrentAngularPerturbation.Roll,
         -Stats->MaxRollPerturbation, Stats->MaxRollPerturbation);
     CurrentAngularPerturbation.Pitch = FMath::Clamp(CurrentAngularPerturbation.Pitch,

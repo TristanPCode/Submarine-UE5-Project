@@ -238,7 +238,7 @@ public:
     /**
      * Multiplies CircleDetectionRange based on target vulnerability.
      * Low score -> near 0 (circle blocked). High score -> 1 or above.
-     * Default: flat 1.0 — override in editor to tune behaviour.
+     * Default: flat 1.0 - override in editor to tune behaviour.
      */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Radar|Curves")
     FRuntimeFloatCurve CircleRangeMultiplierCurve;

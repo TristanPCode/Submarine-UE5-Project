@@ -25,7 +25,7 @@ class USubmarineLoadingScreen;
 
 /**
  * Caches killer identity at the moment of death.
- * We cannot keep a weak pointer to the torpedo — it destroys itself
+ * We cannot keep a weak pointer to the torpedo - it destroys itself
  * within the same frame or shortly after. Instead we store the name,
  * class, and the firing submarine pointer (submarines persist).
  */
@@ -123,7 +123,7 @@ public:
     bool IsRecording() const;
 
     // -----------------------------------------------------------------------
-    //  Assets — assign in editor
+    //  Assets - assign in editor
     // -----------------------------------------------------------------------
 
     /** Spectator pawn class to spawn when a submarine dies. */
@@ -232,7 +232,7 @@ private:
     TWeakObjectPtr<AController>    PendingDeadController;
 
     /**
-     * Killer info cached at death time — survives the DeathPreviewDelay
+     * Killer info cached at death time - survives the DeathPreviewDelay
      * even after the torpedo is destroyed.
      */
     FKillerInfo PendingKillerInfo;

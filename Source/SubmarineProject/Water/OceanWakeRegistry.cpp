@@ -74,7 +74,7 @@ void UOceanWakeRegistry::OnWorldPostActorTickStatic(UWorld* World,
 }
 
 // ---------------------------------------------------------------------------
-//  UpdateLODs — per-frame main update
+//  UpdateLODs - per-frame main update
 // ---------------------------------------------------------------------------
 void UOceanWakeRegistry::UpdateLODs(UWorld* World)
 {

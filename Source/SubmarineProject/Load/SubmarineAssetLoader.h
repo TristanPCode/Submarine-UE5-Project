@@ -13,7 +13,7 @@ DECLARE_DYNAMIC_DELEGATE(FOnPreloadComplete);
 /**
  * USubmarineAssetLoader
  *
- * GameInstanceSubsystem — created automatically, persists through level loads.
+ * GameInstanceSubsystem - created automatically, persists through level loads.
  *
  * Preloads all assets referenced by a match configuration BEFORE gameplay
  * starts. This eliminates first-frame lag spikes from:
@@ -47,7 +47,7 @@ public:
     /**
      * Begin async preload of all assets referenced by the match settings.
      * OnComplete fires when ALL assets are loaded and ready.
-     * Safe to call multiple times — cancels and restarts if called again.
+     * Safe to call multiple times - cancels and restarts if called again.
      *
      * @param Settings     The resolved runtime match settings.
      * @param OnComplete   Delegate fired when loading is done.

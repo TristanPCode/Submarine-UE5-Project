@@ -21,7 +21,7 @@ void UTorpedoPhysicsComponent::BeginPlay()
 }
 
 // -----------------------------------------------------------------------------
-//  SetInitialVelocity — called by SubmarineTorpedoComponent right after spawn
+//  SetInitialVelocity - called by SubmarineTorpedoComponent right after spawn
 // -----------------------------------------------------------------------------
 void UTorpedoPhysicsComponent::SetInitialVelocity(const FVector& WorldVelocity)
 {
@@ -71,7 +71,7 @@ void UTorpedoPhysicsComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
 }
 
 // -----------------------------------------------------------------------------
-//  Gravity — always downward
+//  Gravity - always downward
 // -----------------------------------------------------------------------------
 FVector UTorpedoPhysicsComponent::ComputeGravityForce() const
 {
@@ -81,7 +81,7 @@ FVector UTorpedoPhysicsComponent::ComputeGravityForce() const
 }
 
 // -----------------------------------------------------------------------------
-//  Buoyancy — mirrors submarine logic (surface transition blend)
+//  Buoyancy - mirrors submarine logic (surface transition blend)
 // -----------------------------------------------------------------------------
 FVector UTorpedoPhysicsComponent::ComputeBuoyancyForce() const
 {
@@ -98,7 +98,7 @@ FVector UTorpedoPhysicsComponent::ComputeBuoyancyForce() const
 }
 
 // -----------------------------------------------------------------------------
-//  Drag — simple linear, opposes velocity
+//  Drag - simple linear, opposes velocity
 // -----------------------------------------------------------------------------
 FVector UTorpedoPhysicsComponent::ComputeDragForce() const
 {
@@ -107,7 +107,7 @@ FVector UTorpedoPhysicsComponent::ComputeDragForce() const
 
     FVector BaseDrag = -PhysicsVelocity * Stats->DragCoefficient;
 
-    // Regional drag modifier (Phase 6.3 — only if region DA enables torpedo drag).
+    // Regional drag modifier (Phase 6.3 - only if region DA enables torpedo drag).
     // Lightweight: torpedoes are fast and numerous, so we skip this if the region
     // doesn't explicitly affect torpedoes (bAffectTorpedoes flag on the DA).
     AActor* Owner = GetOwner();
@@ -127,7 +127,7 @@ FVector UTorpedoPhysicsComponent::ComputeDragForce() const
 }
 
 // -----------------------------------------------------------------------------
-//  Thrust — PD controller driving forward speed toward MaxSpeed
+//  Thrust - PD controller driving forward speed toward MaxSpeed
 // -----------------------------------------------------------------------------
 FVector UTorpedoPhysicsComponent::ComputeThrustForce() const
 {
@@ -142,7 +142,7 @@ FVector UTorpedoPhysicsComponent::ComputeThrustForce() const
 
     if (Error <= 0.f) return FVector::ZeroVector; // already at or above max speed
 
-    // Proportional thrust — clamp to acceleration cap
+    // Proportional thrust - clamp to acceleration cap
     const float ThrustMag = FMath::Min(Error * Stats->TorpedoAcceleration, Stats->TorpedoAcceleration);
     return Forward * ThrustMag;
 }

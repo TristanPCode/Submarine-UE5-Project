@@ -34,20 +34,20 @@ ASubmarinePawn::ASubmarinePawn()
     SubmarineBody = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("SubmarineBody"));
     RootComponent = SubmarineBody;
 
-    // POV camera — attached to root, inherits all rotation
+    // POV camera - attached to root, inherits all rotation
     Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("CameraPOV"));
     Camera->SetupAttachment(RootComponent);
     Camera->SetRelativeLocation(CameraOffset);
     Camera->bUsePawnControlRotation = false;
 
-    // Periscope camera — attached to root so it follows submarine movement/rotation,
+    // Periscope camera - attached to root so it follows submarine movement/rotation,
     // but its yaw offset is applied manually each frame
     PeriscopeCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("CameraPeriscope"));
     PeriscopeCamera->SetupAttachment(RootComponent);
     PeriscopeCamera->bUsePawnControlRotation = false;
     PeriscopeCamera->SetAutoActivate(false);
 
-    // 3rd person camera — NOT attached to root, positioned in world space each frame
+    // 3rd person camera - NOT attached to root, positioned in world space each frame
     ThirdPersonCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("CameraThirdPerson"));
     ThirdPersonCamera->SetupAttachment(RootComponent); // attachment overridden at runtime
     ThirdPersonCamera->bUsePawnControlRotation = false;
@@ -108,7 +108,7 @@ void ASubmarinePawn::BeginPlay()
     PitchAngularMomentum = 0.f;
     PitchVelocity = 0.f;
 
-    // Wire DA to physics component — MUST happen before physics component ticks
+    // Wire DA to physics component - MUST happen before physics component ticks
     if (PhysicsHandler)
         PhysicsHandler->Characteristics = Characteristics;
 
@@ -325,7 +325,7 @@ void ASubmarinePawn::FreezeOnDeath()
     //  Hide from ALL players.
     //
     //  SetActorHiddenInGame alone does NOT reliably hide Blueprint-added
-    //  child components in UE5 — they maintain independent visibility state.
+    //  child components in UE5 - they maintain independent visibility state.
     //  We explicitly call SetVisibility(false) and SetHiddenInGame(true)
     //  on every primitive, with bPropagateToChildren=true.
     // ------------------------------------------------------------------
@@ -399,7 +399,7 @@ void ASubmarinePawn::FreezeOnDeath()
     }
 
     // ------------------------------------------------------------------
-    //  Detach controller — stops Enhanced Input and lets the dead player's
+    //  Detach controller - stops Enhanced Input and lets the dead player's
     //  camera be driven by DeathSequenceComponent::ApplyViewToController.
     // ------------------------------------------------------------------
     if (AController* C = GetController())
@@ -425,12 +425,12 @@ void ASubmarinePawn::FreezeOnDeath()
         }
     }
 
-    // Disable tick — no more movement, physics, or input processing
+    // Disable tick - no more movement, physics, or input processing
     SetActorTickEnabled(false);
 }
 
 // -----------------------------------------------------------------------------
-//  Blueprint collision forwarding — thin wrappers into CollisionHandler
+//  Blueprint collision forwarding - thin wrappers into CollisionHandler
 //  Same UFUNCTION names preserved so existing Blueprint graphs keep working.
 // -----------------------------------------------------------------------------
 
@@ -447,7 +447,7 @@ void ASubmarinePawn::HandleHitFromBlueprint(const FHitResult& Hit)
 }
 
 // -----------------------------------------------------------------------------
-//  Overlap callbacks (must stay on pawn — delegate binding requires UFUNCTION)
+//  Overlap callbacks (must stay on pawn - delegate binding requires UFUNCTION)
 // -----------------------------------------------------------------------------
 
 void ASubmarinePawn::OnOverlapBegin(UPrimitiveComponent* OverlappedComp, AActor* OtherActor,
@@ -684,7 +684,7 @@ void ASubmarinePawn::TickVerticalMovement(float DeltaTime)
         }
         else
         {
-            // Blend done — hard snap to state at normal speed
+            // Blend done - hard snap to state at normal speed
             PitchAngularMomentum = 0.f;
             VerticalStateIndex = NearestState;
             TargetPitch = FMath::FInterpConstantTo(
@@ -797,7 +797,7 @@ void ASubmarinePawn::TickVerticalMovement(float DeltaTime)
 
         if (PitchBlend < 0.01f)
         {
-            // Pitch is essentially 0 — drain Z velocity toward 0 quickly
+            // Pitch is essentially 0 - drain Z velocity toward 0 quickly
             // so buoyancy/gravity reach equilibrium without residual movement
             PhysicsHandler->PhysicsVelocity.Z = FMath::FInterpConstantTo(
                 PhysicsHandler->PhysicsVelocity.Z, 0.f,
@@ -805,7 +805,7 @@ void ASubmarinePawn::TickVerticalMovement(float DeltaTime)
         }
         else
         {
-            // Actively pitching — override Z velocity with input intent
+            // Actively pitching - override Z velocity with input intent
             PhysicsHandler->PhysicsVelocity.Z = FMath::Lerp(
                 PhysicsHandler->PhysicsVelocity.Z,
                 VerticalSpeed,
@@ -1091,7 +1091,7 @@ int32 ASubmarinePawn::FindNearestVerticalState(float Pitch) const
 
     for (int32 i = 0; i < SafeVerticalStateCount; ++i)
     {
-        // Skip ghost states — they are never snapped to
+        // Skip ghost states - they are never snapped to
         if (Stats && Stats->IsGhostState(i)) continue;
 
         const float Dist = FMath::Abs(GetPitchForState(i) - Pitch);
@@ -1374,7 +1374,7 @@ void ASubmarinePawn::OnScrollZoom(const FInputActionValue& Value)
     }
 }
 
-// Camera periscope — tap on Started, hold fires in Tick
+// Camera periscope - tap on Started, hold fires in Tick
 void ASubmarinePawn::OnCameraPeriscopeStarted(const FInputActionValue& Value)
 {
     if (CameraState == ESubmarineCameraState::ThirdPerson) return;

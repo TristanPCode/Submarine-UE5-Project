@@ -78,7 +78,7 @@ public:
 
 private:
 
-    // Remove TObjectPtr from FBillboardEntry — use raw pointer, GC managed via parallel array
+    // Remove TObjectPtr from FBillboardEntry - use raw pointer, GC managed via parallel array
     struct FBillboardEntry
     {
         TWeakObjectPtr<USubmarineInfoBillboardComponent> Source;

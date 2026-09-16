@@ -15,7 +15,7 @@
  *      replay system can find and hide it during death cams without explicit
  *      type checks.
  *
- *   2. Provides CloneComponentsOntoGhost() — called by UReplayPlaybackComponent
+ *   2. Provides CloneComponentsOntoGhost() - called by UReplayPlaybackComponent
  *      when spawning a ghost for this actor. It copies:
  *        - Every UStaticMeshComponent  (mesh asset + materials + relative transform)
  *        - Every UNiagaraComponent     (system asset + relative transform, activated)

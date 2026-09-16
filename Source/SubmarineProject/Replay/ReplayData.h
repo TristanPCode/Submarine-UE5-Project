@@ -54,7 +54,7 @@ struct FReplayActorFrame
     UPROPERTY()
     FVector Location = FVector::ZeroVector;
 
-    /** World-space rotation (pitch, yaw — roll always 0 for submarines) */
+    /** World-space rotation (pitch, yaw - roll always 0 for submarines) */
     UPROPERTY()
     FRotator Rotation = FRotator::ZeroRotator;
 
@@ -98,7 +98,7 @@ struct FReplayActorFrame
 };
 
 // ---------------------------------------------------------------------------
-//  Full snapshot — one per actor, taken every FullSnapshotInterval seconds
+//  Full snapshot - one per actor, taken every FullSnapshotInterval seconds
 //  Same fields as FReplayActorFrame but semantically a "keyframe"
 // ---------------------------------------------------------------------------
 USTRUCT(BlueprintType)

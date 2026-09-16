@@ -16,7 +16,7 @@ class UCanvasPanel;
  * a shared atlas texture. The decimal dot is baked into the background.
  * 
  * Digit count is driven by Config.GetFloat("DigitCount") cast to int.
- * Digit images are created dynamically in NativeOnInitialized — no
+ * Digit images are created dynamically in NativeOnInitialized - no
  * hardcoded BindWidget slots.
  *
  * Atlas layout (3 rows × 10 digits):
@@ -166,7 +166,7 @@ private:
     /**
      * Position digit images and decimal dot on DigitCanvas using config
      * pixel offsets scaled to current canvas size.
-     * Safe to call before layout — deferred if canvas size is zero.
+     * Safe to call before layout - deferred if canvas size is zero.
      */
     void PositionDigitImages();
 

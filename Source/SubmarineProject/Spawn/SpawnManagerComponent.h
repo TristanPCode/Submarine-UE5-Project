@@ -27,13 +27,13 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnAllSubmarinesSpawned);
  *
  * Two-phase design:
  *
- *   Phase 1 — ResolveSpawnEntries():
+ *   Phase 1 - ResolveSpawnEntries():
  *     Reads URuntimeMatchSettings, collects ASubmarineSpawnLocator actors,
  *     builds TArray<FSpawnedSubmarineEntry> with all assignments determined.
  *     NO pawns are spawned. NO controllers are created.
  *     This phase can run before assets finish loading.
  *
- *   Phase 2 — ExecuteSpawn():
+ *   Phase 2 - ExecuteSpawn():
  *     Spawns all pawns and controllers.
  *     Configures split-screen viewport if needed.
  *     Creates second local player if needed.

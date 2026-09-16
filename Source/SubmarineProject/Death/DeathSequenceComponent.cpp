@@ -35,7 +35,7 @@ void UDeathSequenceComponent::BeginDeathSequence(ASubmarinePawn* DeadSubmarine,
     if (Phase != EDeathSequencePhase::Inactive)
     {
         if (S->bLogDeathSeq) {
-            UE_LOG(LogTemp, Warning, TEXT("[DeathSeq] BeginDeathSequence called while already active — ignored"));
+            UE_LOG(LogTemp, Warning, TEXT("[DeathSeq] BeginDeathSequence called while already active - ignored"));
         }
         return;
     }
@@ -161,7 +161,7 @@ void UDeathSequenceComponent::BeginDeathSequence(ASubmarinePawn* DeadSubmarine,
     {
         if (S->bLogDeathSeq) {
             UE_LOG(LogTemp, Warning,
-                TEXT("[DeathSeq] No replay data or playback component — using live cam fallback"));
+                TEXT("[DeathSeq] No replay data or playback component - using live cam fallback"));
         }
     }
     
@@ -195,14 +195,14 @@ void UDeathSequenceComponent::StartDeathCam(float InPlaybackSpeed)
     PhaseTimer = 0.f;
     PhaseDuration = WallClock;
 
-    // Schedule fades — purely cosmetic, no effect on PhaseDuration
+    // Schedule fades - purely cosmetic, no effect on PhaseDuration
     ScheduleFades(WallClock);
 
     OnDeathCamStarted.Broadcast(ActiveDeathCamMode, WallClock);
 
     if (S->bLogDeathSeq) {
         UE_LOG(LogTemp, Log,
-            TEXT("[DeathSeq] DeathCam started — mode=%d wallclock=%.1fs"),
+            TEXT("[DeathSeq] DeathCam started - mode=%d wallclock=%.1fs"),
             static_cast<int32>(ActiveDeathCamMode), WallClock);
     }
 }
@@ -353,7 +353,7 @@ void UDeathSequenceComponent::FinishSequence()
 
 
     if (S->bLogDeathSeq) {
-        UE_LOG(LogTemp, Log, TEXT("[DeathSeq] Sequence complete — broadcasting OnDeathSequenceComplete"));
+        UE_LOG(LogTemp, Log, TEXT("[DeathSeq] Sequence complete - broadcasting OnDeathSequenceComplete"));
     }
     OnDeathSequenceComplete.Broadcast();
 }
@@ -394,7 +394,7 @@ void UDeathSequenceComponent::TickComponent(float DeltaTime, ELevelTick TickType
 }
 
 // ---------------------------------------------------------------------------
-//  Death cam tick — positions the dead controller's view each frame
+//  Death cam tick - positions the dead controller's view each frame
 // ---------------------------------------------------------------------------
 void UDeathSequenceComponent::TickDeathCam(float DeltaTime)
 {
@@ -444,7 +444,7 @@ void UDeathSequenceComponent::TickDeathCam(float DeltaTime)
     else if (bHasValidFrozenFrame)
     {
         if (S->bLogDeathSeq) {
-            UE_LOG(LogTemp, Log, TEXT("[DeathSeq] Target lost — freezing camera"));
+            UE_LOG(LogTemp, Log, TEXT("[DeathSeq] Target lost - freezing camera"));
         }
         bCameraFrozen = true;
         ApplyViewToController(FrozenCamLocation, FrozenCamRotation);
@@ -466,7 +466,7 @@ void UDeathSequenceComponent::TickDeathCam(float DeltaTime)
 }
 
 // ---------------------------------------------------------------------------
-//  ComputeReplayDeathCamTransform — uses ghost actors from playback component
+//  ComputeReplayDeathCamTransform - uses ghost actors from playback component
 // ---------------------------------------------------------------------------
 bool UDeathSequenceComponent::ComputeReplayDeathCamTransform(FVector& OutLoc,
     FRotator& OutRot) const
@@ -538,7 +538,7 @@ bool UDeathSequenceComponent::ComputeReplayDeathCamTransform(FVector& OutLoc,
     // -----------------------------------------------------------------------
     case EDeathCamMode::KillerPOV:
     {
-        // Torpedo ghost (anchor has no camera — use its transform directly as nose-cam)
+        // Torpedo ghost (anchor has no camera - use its transform directly as nose-cam)
         if (PlaybackComponent->KillerTorpedoGuid.IsValid())
         {
             if (AActor* TG = PlaybackComponent->GetKillerTorpedoGhost(); IsValid(TG))
@@ -557,7 +557,7 @@ bool UDeathSequenceComponent::ComputeReplayDeathCamTransform(FVector& OutLoc,
             return true;
         }
 
-        // Environmental kill — dead sub ghost POV
+        // Environmental kill - dead sub ghost POV
         if (AActor* DG = PlaybackComponent->GetDeadSubGhost(); IsValid(DG))
         {
             OutLoc = DG->GetActorLocation();
@@ -586,7 +586,7 @@ bool UDeathSequenceComponent::ComputeReplayDeathCamTransform(FVector& OutLoc,
 }
 
 // ---------------------------------------------------------------------------
-//  ComputeLiveDeathCamTransform — fallback using live actors
+//  ComputeLiveDeathCamTransform - fallback using live actors
 // ---------------------------------------------------------------------------
 bool UDeathSequenceComponent::ComputeLiveDeathCamTransform(FVector& OutLoc,
     FRotator& OutRot) const

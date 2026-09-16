@@ -252,7 +252,7 @@ public:
     UPROPERTY(BlueprintAssignable, Category = "Torpedo|Events")
     FOnFireCooldownComplete OnFireCooldownComplete;
 
-    /** Fire cooldown expired AND ammo available — ideal for "ready" HUD flash */
+    /** Fire cooldown expired AND ammo available - ideal for "ready" HUD flash */
     UPROPERTY(BlueprintAssignable, Category = "Torpedo|Events")
     FOnReadyToFire OnReadyToFire;
 
@@ -264,7 +264,7 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Debug")
     bool bDebugMainMessages = false;
 
-    /** If true, logs "Cannot fire — cooldown Xs remaining" warnings. */
+    /** If true, logs "Cannot fire - cooldown Xs remaining" warnings. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Debug")
     bool bDebugCooldownLogs = false;
 

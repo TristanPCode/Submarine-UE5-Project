@@ -57,7 +57,7 @@ void UHUDTransitionManager::BeginPlay()
 }
 
 // ---------------------------------------------------------------------------
-//  TickComponent — drives the fade state machine
+//  TickComponent - drives the fade state machine
 // ---------------------------------------------------------------------------
 void UHUDTransitionManager::TickComponent(float DeltaTime, ELevelTick TickType,
     FActorComponentTickFunction* ThisTickFunction)
@@ -152,7 +152,7 @@ void UHUDTransitionManager::ApplyModuleVisibility()
     // Iterate all active modules and apply visibility based on HiddenInContexts
     for (int32 i = 0; i < Root->GetModuleCount(); ++i)
     {
-        // GetModuleByIndex is not currently exposed — iterate via FindModule
+        // GetModuleByIndex is not currently exposed - iterate via FindModule
         // For now, modules apply their own visibility in RefreshVisuals
         // when context is propagated. This method serves as a manual trigger.
     }
@@ -183,7 +183,7 @@ void UHUDTransitionManager::ExecuteContextSwap(EHUDContext NewContext,
             TEXT("[HUDTransitionManager] No HUD settings for context %d "
                 "(valid for Cinematic/None). Hiding HUD."),
             (int32)NewContext);
-        // No HUD for this context — hide entirely
+        // No HUD for this context - hide entirely
         if (UMainHUDWidget* Root = HUDComp->GetRootWidget())
             Root->SetVisibility(ESlateVisibility::Hidden);
         return;

@@ -63,7 +63,7 @@ USubmarineHUDSettings* URuntimeMatchSettings::ResolveHUDSettings(
         if (Global) return Global;
     }
 
-    // 3. Nothing registered — caller handles nullptr (valid for Cinematic etc.)
+    // 3. Nothing registered - caller handles nullptr (valid for Cinematic etc.)
     return nullptr;
 }
 
