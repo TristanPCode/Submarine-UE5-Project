@@ -46,11 +46,6 @@ public:
 
     virtual float EvaluateWeight(const FVector& WorldPos) const override;
 
-    virtual bool GetNearestBoundaryPoint(
-        const FVector2D& QueryXY,
-        FVector2D& OutBoundaryPoint,
-        FVector2D& OutOutwardNormal) const override;
-
 #if WITH_EDITOR
     virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
     virtual void PostEditMove(bool bFinished) override;

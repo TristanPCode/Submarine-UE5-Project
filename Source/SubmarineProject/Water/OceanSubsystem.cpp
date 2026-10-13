@@ -56,6 +56,12 @@ static const FName MPC_WaveK_Oct3(TEXT("Ocean_WaveK_Oct3"));
 static const FName MPC_WaveK_Oct4(TEXT("Ocean_WaveK_Oct4"));
 static const FName MPC_FoamIntensity(TEXT("Ocean_FoamIntensity"));
 
+// Resolved octaves (see OceanGerstner::ToMPC). Vector params:
+//   R,G = K * direction (rad/cm), B = amplitude (cm), A = time phase (rad).
+static const FName MPC_Oct[OceanGerstner::NumOctaves] = {
+    FName(TEXT("Ocean_Oct1")), FName(TEXT("Ocean_Oct2")),
+    FName(TEXT("Ocean_Oct3")), FName(TEXT("Ocean_Oct4")) };
+
 static const FName MPC_UnderwaterColor(TEXT("Ocean_UnderwaterColor"));
 static const FName MPC_WaterShallowColor(TEXT("Ocean_WaterShallowColor"));
 static const FName MPC_WaterDeepColor(TEXT("Ocean_WaterDeepColor"));
@@ -328,15 +334,42 @@ void UOceanSubsystem::UpdateOceanFrame(UWorld* World, ELevelTick TickType, float
     FrameCache.GlobalFoamIntensity = GlobalSource.FoamIntensity;
     FrameCache.GlobalRefractionStrength = GlobalSource.RefractionStrength;
 
+    // Material wave set: shape from GetWaveShapeSample (same as physics),
+    // amplitude from the global source (player 0). Physics builds its
+    // octaves with the same BuildOctaveAt, so only amplitude can differ
+    // (until the per-region wave field, roadmap item 5).
+    FrameCache.WaveTime = static_cast<float>(World->GetTimeSeconds());
+    for (int32 i = 0; i < OceanGerstner::NumOctaves; ++i)
+    {
+        OceanGerstner::FOctave O = BuildOctaveAt(i, GlobalSource);
+
+        if (i == OceanGerstner::PrimaryOctave)
+        {
+            // Never fade the primary: physics rides it. Warn once instead.
+            if (!bWarnedPrimaryUndersampled && ComputeOctaveDrawableFactor(O) < 1.f)
+            {
+                bWarnedPrimaryUndersampled = true;
+                const float MaxScale = (2.f * PI)
+                    / (OceanGerstner::WaveK[i] * SurfaceMinVerticesPerWave * SurfaceVertexSpacing);
+                UE_LOG(LogTemp, Warning,
+                    TEXT("[OceanSubsystem] Primary wave is too short for the ocean mesh ")
+                    TEXT("(spacing %.0f cm, min %.1f verts/wave). Rendered crests will not match ")
+                    TEXT("physics. Keep WaveLengthScale <= %.2f or use a denser mesh."),
+                    SurfaceVertexSpacing, SurfaceMinVerticesPerWave, MaxScale);
+            }
+        }
+        else
+        {
+            // Visual-only detail octave: fade out what the mesh cannot draw.
+            O.Amp *= ComputeOctaveDrawableFactor(O);
+        }
+
+        FrameCache.MPCOctaves[i] = OceanGerstner::ToMPC(O, FrameCache.WaveTime);
+    }
+
     FrameCache.bValid = true;
 
     WriteMPCParameters();
-    // Transition slots are DISABLED: validation showed the 1024 height field
-    // is accurate to ~2 UU everywhere including transitions, so slot correction
-    // is unnecessary. The slot machinery also produced camera-dependent garbage.
-    // Left compiled but uncalled; can be deleted entirely in a later cleanup.
-    //UpdateTransitionSlots(DeltaTime);
-    //WriteTransitionSlotsMPC();
 
     // Validation: reconstruct visual height on CPU and compare to physics.
     if (CVarOceanDebugSurface.GetValueOnGameThread() != 0)
@@ -499,24 +532,57 @@ float UOceanSubsystem::EvaluateGerstnerOctave(int32 OctaveIndex,
     const FVector2D& XY, float Time, float BaseAmplitude, float BaseSpeed,
     const FVector2D& BaseDirection, float WaveLengthScale) const
 {
-    if (OctaveIndex < 0 || OctaveIndex >= OceanGerstner::NumOctaves) return 0.f;
-    if (BaseAmplitude <= 0.f) return 0.f;
+    const OceanGerstner::FOctave O = OceanGerstner::BuildOctave(OctaveIndex,
+        BaseAmplitude, BaseSpeed, BaseDirection, WaveLengthScale);
+    return OceanGerstner::EvaluateZ(O, XY, Time);
+}
 
-    const float K = OceanGerstner::WaveK[OctaveIndex] * FMath::Max(WaveLengthScale, 0.0001f);
-    const float Amp = BaseAmplitude * OceanGerstner::AmpFraction[OctaveIndex];
-    const float Omega = BaseSpeed * OceanGerstner::SpeedFraction[OctaveIndex];
+// ---------------------------------------------------------------------------
+//  GetWaveShapeSample
+//  Where the wave SHAPE (speed, direction, wavelength scale) comes from.
+//  Global (DefaultRegionData) so the shared surface and physics agree and
+//  shape never changes as a submarine moves. Amplitude stays per region.
+// ---------------------------------------------------------------------------
+FWaterSample UOceanSubsystem::GetWaveShapeSample() const
+{
+    return GetDefaultSample();
+}
 
-    // Rotate base direction by the per-octave angle.
-    const FVector2D BaseDir = BaseDirection.GetSafeNormal();
-    const float RotRad = FMath::DegreesToRadians(OceanGerstner::RotAngleDeg[OctaveIndex]);
-    const float CosR = FMath::Cos(RotRad);
-    const float SinR = FMath::Sin(RotRad);
-    const FVector2D Dir(
-        BaseDir.X * CosR - BaseDir.Y * SinR,
-        BaseDir.X * SinR + BaseDir.Y * CosR);
+// ---------------------------------------------------------------------------
+//  SetSurfaceMeshSampling / ComputeOctaveDrawableFactor
+//  The ocean mesh is a uniform grid; a wave shorter than a few vertex
+//  spacings cannot be drawn and aliases. Detail octaves are faded out
+//  (visual only); the primary is never faded because physics rides it.
+// ---------------------------------------------------------------------------
+void UOceanSubsystem::SetSurfaceMeshSampling(float VertexSpacing, float MinVerticesPerWave)
+{
+    SurfaceVertexSpacing = FMath::Max(VertexSpacing, 0.f);
+    SurfaceMinVerticesPerWave = FMath::Max(MinVerticesPerWave, 2.f);
+    bWarnedPrimaryUndersampled = false;
+}
 
-    const float Phase = K * (Dir.X * XY.X + Dir.Y * XY.Y) - Omega * Time;
-    return Amp * FMath::Sin(Phase);
+float UOceanSubsystem::ComputeOctaveDrawableFactor(const OceanGerstner::FOctave& O) const
+{
+    if (SurfaceVertexSpacing <= 0.f) return 1.f;
+    const float K = static_cast<float>(O.KDir.Size());
+    if (K <= KINDA_SMALL_NUMBER) return 1.f;
+
+    const float VertsPerWave = (2.f * PI / K) / SurfaceVertexSpacing;
+    return FMath::SmoothStep(0.75f * SurfaceMinVerticesPerWave,
+        SurfaceMinVerticesPerWave, VertsPerWave);
+}
+
+// ---------------------------------------------------------------------------
+//  BuildOctaveAt
+//  The one octave builder used by physics, debug and the MPC write.
+// ---------------------------------------------------------------------------
+OceanGerstner::FOctave UOceanSubsystem::BuildOctaveAt(int32 OctaveIndex,
+    const FWaterSample& AmpSource) const
+{
+    const FWaterSample Shape = GetWaveShapeSample();
+    return OceanGerstner::BuildOctave(OctaveIndex,
+        AmpSource.WaveAmplitude, Shape.WaveSpeed,
+        Shape.WaveDirection, Shape.WaveLengthScale);
 }
 
 // ---------------------------------------------------------------------------
@@ -532,9 +598,7 @@ float UOceanSubsystem::EvaluateGerstnerSum(const FVector2D& XY, float Time,
     float Sum = 0.f;
     for (int32 i = 0; i <= Clamped; ++i)
     {
-        Sum += EvaluateGerstnerOctave(i, XY, Time,
-            Sample.WaveAmplitude, Sample.WaveSpeed,
-            Sample.WaveDirection, Sample.WaveLengthScale);
+        Sum += OceanGerstner::EvaluateZ(BuildOctaveAt(i, Sample), XY, Time);
     }
     return Sum;
 }
@@ -556,27 +620,22 @@ FOceanSurfaceSample UOceanSubsystem::QuerySurface(const FVector2D& XY, float Tim
     const FWaterSample Sample = SampleWaterAt(FVector(XY.X, XY.Y, ProbeZ));
     Out.RegionalBaseHeight = Sample.WaterHeight;
 
-    // Primary octave only -- the rideable wave.
-    Out.PrimaryWaveOffset = EvaluateGerstnerOctave(OceanGerstner::PrimaryOctave,
-        XY, Time, Sample.WaveAmplitude, Sample.WaveSpeed,
-        Sample.WaveDirection, Sample.WaveLengthScale);
+    // Primary octave only -- the rideable wave. Same builder as the MPC write.
+    const OceanGerstner::FOctave O =
+        BuildOctaveAt(OceanGerstner::PrimaryOctave, Sample);
+    const float Phase = OceanGerstner::Phase(O, XY, Time);
+    Out.PrimaryWaveOffset = O.Amp * FMath::Sin(Phase);
 
     Out.SurfaceHeight = Out.RegionalBaseHeight + Out.PrimaryWaveOffset;
 
     // Analytic normal from the primary wave slope (closed form).
-    //   dZ/dX = A * K * Dir.X * cos(Phase)
-    //   dZ/dY = A * K * Dir.Y * cos(Phase)
+    //   dZ/dX = A * KDir.X * cos(Phase)
+    //   dZ/dY = A * KDir.Y * cos(Phase)
     //   Normal = normalize( (-dZ/dX, -dZ/dY, 1) )
     {
-        const int32 i = OceanGerstner::PrimaryOctave;
-        const float K = OceanGerstner::WaveK[i] * FMath::Max(Sample.WaveLengthScale, 0.0001f);
-        const float Amp = Sample.WaveAmplitude * OceanGerstner::AmpFraction[i];
-        const float Omega = Sample.WaveSpeed * OceanGerstner::SpeedFraction[i];
-        const FVector2D Dir = Sample.WaveDirection.GetSafeNormal();
-        const float Phase = K * (Dir.X * XY.X + Dir.Y * XY.Y) - Omega * Time;
         const float CosP = FMath::Cos(Phase);
-        const float dZdX = Amp * K * Dir.X * CosP;
-        const float dZdY = Amp * K * Dir.Y * CosP;
+        const float dZdX = O.Amp * static_cast<float>(O.KDir.X) * CosP;
+        const float dZdY = O.Amp * static_cast<float>(O.KDir.Y) * CosP;
         Out.SurfaceNormal = FVector(-dZdX, -dZdY, 1.f).GetSafeNormal();
     }
 
@@ -584,59 +643,33 @@ FOceanSurfaceSample UOceanSubsystem::QuerySurface(const FVector2D& XY, float Tim
 }
 
 // ---------------------------------------------------------------------------
-//  EvaluateSlotCorrectionCPU
-//  Mirrors the material's transition-slot loop EXACTLY. This is the canonical
-//  slot formula -- the material must match THIS, not the other way around.
-//  Returns the corrected height (HeightFieldValue with slot overrides applied).
-//
-//  Convention (must match material):
-//    For each active slot:
-//      d = dot(XY - Center, Normal)              signed dist, + = inside region
-//      t = smoothstep(-BlendRadius, 0, d)        0 outside .. 1 at/inside boundary
-//      SlotHeight = lerp(HeightOuter, HeightInner, t)
-//      Corrected  = lerp(Corrected, SlotHeight, Weight)
-// ---------------------------------------------------------------------------
-float UOceanSubsystem::EvaluateSlotCorrectionCPU(const FVector2D& XY,
-    float HeightFieldValue) const
-{
-    float Corrected = HeightFieldValue;
-
-    for (int32 s = 0; s < MaxTransitionSlots; ++s)
-    {
-        const FTransitionSlotState& Slot = TransitionSlots[s];
-        if (Slot.Weight < 0.001f) continue;
-
-        const float d = FVector2D::DotProduct(XY - Slot.BoundaryPoint, Slot.OutwardNormal);
-        const float BR = FMath::Max(Slot.BlendRadius, 1.f);
-        const float t = FMath::SmoothStep(-BR, 0.f, d);
-        const float SlotHeight = FMath::Lerp(Slot.HeightOuter, Slot.HeightInner, t);
-        Corrected = FMath::Lerp(Corrected, SlotHeight, Slot.Weight);
-    }
-
-    return Corrected;
-}
-
-// ---------------------------------------------------------------------------
 //  EvaluatePositionInternal
-//  Core blending logic. Iterates registered regions sorted by priority.
-//  Accumulates weighted contributions. Falls back to DefaultRegionData.
+//  Core blending logic. Starts from DefaultRegionData, then applies each
+//  region from LOWEST to HIGHEST priority:
+//      Accumulated = lerp(Accumulated, Region, Weight)
+//  So a region at weight 1 fully replaces everything below it (a position
+//  deep inside OpenOcean gets exactly OpenOcean's values), a feathered edge
+//  (0 < Weight < 1) fades smoothly into what is underneath, and the higher
+//  priority region wins where regions overlap ("higher value wins before
+//  blending", WaterRegionDataAsset::Priority).
+//
+//  Previous version started the default at weight 1 and blended each region
+//  with Weight / (TotalWeight + Weight), so a region at full weight only
+//  reached 50% (log 2026-10-13: height 8990 inside a BaseWaterHeight=10000
+//  region).
 // ---------------------------------------------------------------------------
 FWaterSample UOceanSubsystem::EvaluatePositionInternal(const FVector& WorldPos) const
 {
-    // The default sample is always the baseline.
-    // It is treated as a region with weight = 1.0, so that any registered
-    // region blends INTO the default rather than replacing it entirely.
-    // This ensures a smooth transition at region boundaries -- as EvaluateWeight
-    // fades from 0 to 1, the sample continuously interpolates from default to
-    // region instead of snapping.
     FWaterSample Accumulated = GetDefaultSample();
-    float TotalWeight = 1.f;  // default always contributes weight 1
 
-    for (const TObjectPtr<AWaterRegionActor>& Region : RegisteredRegions)
+    // RegisteredRegions is sorted by Priority DESCENDING (RegisterRegion),
+    // so iterate backwards: lowest priority first, highest applied last.
+    for (int32 r = RegisteredRegions.Num() - 1; r >= 0; --r)
     {
+        const AWaterRegionActor* Region = RegisteredRegions[r];
         if (!Region || !Region->RegionData) continue;
 
-        const float Weight = Region->EvaluateWeight(WorldPos);
+        const float Weight = FMath::Clamp(Region->EvaluateWeight(WorldPos), 0.f, 1.f);
         if (Weight <= 0.f) continue;
 
         // Build a full sample from this region's data asset.
@@ -657,21 +690,7 @@ FWaterSample UOceanSubsystem::EvaluatePositionInternal(const FVector& WorldPos) 
         RegionSample.FoamIntensity = Region->RegionData->FoamIntensity;
         RegionSample.RefractionStrength = Region->RegionData->RefractionStrength;
 
-        RegionSample.bIsUnderwater = WorldPos.Z < Region->RegionData->BaseWaterHeight;
-
-        if (TotalWeight <= 0.f)
-        {
-            // First contributing region: replace the default entirely.
-            Accumulated = RegionSample;
-            TotalWeight = Weight;
-        }
-        else
-        {
-            // Subsequent regions: blend proportionally.
-            const float BlendAlpha = Weight / (TotalWeight + Weight);
-            Accumulated = BlendSamples(Accumulated, RegionSample, BlendAlpha);
-            TotalWeight += Weight;
-        }
+        Accumulated = BlendSamples(Accumulated, RegionSample, Weight);
     }
 
     // Final underwater flag uses the blended water height.
@@ -807,6 +826,21 @@ void UOceanSubsystem::WriteMPCParameters() const
     MPCI->SetScalarParameterValue(MPC_WaveK_Oct4, OceanGerstner::WaveK[3]);
     MPCI->SetScalarParameterValue(MPC_FoamIntensity, FrameCache.GlobalFoamIntensity);
 
+    // Resolved octaves for MF_Ocean_HeightOffset (single wave definition).
+    bool bOctWriteOK = true;
+    for (int32 i = 0; i < OceanGerstner::NumOctaves; ++i)
+    {
+        bOctWriteOK &= MPCI->SetVectorParameterValue(MPC_Oct[i], FrameCache.MPCOctaves[i]);
+    }
+    static bool bWarnedOctMissing = false;
+    if (!bOctWriteOK && !bWarnedOctMissing)
+    {
+        bWarnedOctMissing = true;
+        UE_LOG(LogTemp, Warning,
+            TEXT("[OceanSubsystem] Ocean_Oct1..4 vector params missing in MPC_Ocean. ")
+            TEXT("Add them or the material waves will be flat."));
+    }
+
     MPCI->SetVectorParameterValue(MPC_UnderwaterColor, FrameCache.GlobalUnderwaterColor);
     MPCI->SetVectorParameterValue(MPC_WaterShallowColor, FrameCache.GlobalWaterShallowColor);
     MPCI->SetVectorParameterValue(MPC_WaterDeepColor, FrameCache.GlobalWaterDeepColor);
@@ -915,230 +949,6 @@ void UOceanSubsystem::WriteMPCParameters() const
             FrameCache.GlobalWaveDirection.Y,
             FrameCache.PlayerSamples[0].WaterHeight,
             FrameCache.PlayerSamples[1].WaterHeight);
-    }
-}
-
-// ---------------------------------------------------------------------------
-//  UpdateTransitionSlots
-//  Called each frame. Manages which regions occupy the 8 precision slots.
-//
-//  Algorithm:
-//    1. For each registered region, compute boundary distance to nearest camera.
-//    2. Assign/keep slots for the 8 closest boundaries within CullMargin.
-//    3. Fade out slots for regions that moved out of range.
-//    4. Fade in slots for newly assigned regions.
-//    5. Anti-pop: slots only released after fade reaches 0.
-// ---------------------------------------------------------------------------
-void UOceanSubsystem::UpdateTransitionSlots(float DeltaTime)
-{
-    UWorld* World = CachedWorld.Get();
-    if (!World) return;
-
-    // Collect local camera positions (up to 2 for split-screen).
-    TArray<FVector2D, TInlineAllocator<2>> CameraPositions;
-    for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
-    {
-        APlayerController* PC = It->Get();
-        if (!PC || !PC->IsLocalController()) continue;
-        FVector Loc; FRotator Rot;
-        PC->GetPlayerViewPoint(Loc, Rot);
-        CameraPositions.Add(FVector2D(Loc.X, Loc.Y));
-    }
-    if (CameraPositions.IsEmpty()) return;
-
-    const float DefaultHeight = GetDefaultWaterHeight();
-
-    // Compute priority score for each registered region.
-    // Score = max(0, CullMargin - MinCameraDistanceToBoundary).
-    // Higher score = higher priority for a slot.
-    struct FRegionCandidate
-    {
-        AWaterRegionActor* Region = nullptr;
-        FVector2D          BoundaryPt = FVector2D::ZeroVector;
-        FVector2D          Normal = FVector2D(1.f, 0.f);
-        float              Score = 0.f;
-        float              CamDist = FLT_MAX;
-    };
-
-    TArray<FRegionCandidate> Candidates;
-    Candidates.Reserve(RegisteredRegions.Num());
-
-    for (const TObjectPtr<AWaterRegionActor>& Region : RegisteredRegions)
-    {
-        if (!Region || !Region->RegionData) continue;
-
-        // Find nearest camera and its distance to the boundary.
-        float MinDist = FLT_MAX;
-        FVector2D BestBoundary;
-        FVector2D BestNormal;
-        bool bGotBoundary = false;
-
-        for (const FVector2D& CamXY : CameraPositions)
-        {
-            FVector2D BPt, BNorm;
-            if (Region->GetNearestBoundaryPoint(CamXY, BPt, BNorm))
-            {
-                const float D = (CamXY - BPt).Size();
-                if (D < MinDist)
-                {
-                    MinDist = D;
-                    BestBoundary = BPt;
-                    BestNormal = BNorm;
-                    bGotBoundary = true;
-                }
-            }
-        }
-        if (!bGotBoundary) continue;
-
-        // CullMargin = BlendRadius * 3 ensures slot is assigned well before
-        // the transition becomes visible to the camera.
-        const float CullMargin = Region->RegionData->BlendRadius * 3.f + 2000.f;
-        const float Score = FMath::Max(0.f, CullMargin - MinDist);
-        if (Score <= 0.f) continue;
-
-        FRegionCandidate C;
-        C.Region = Region.Get();
-        C.BoundaryPt = BestBoundary;
-        C.Normal = BestNormal;
-        C.Score = Score;
-        C.CamDist = MinDist;
-        Candidates.Add(C);
-    }
-
-    // Sort by score descending (highest priority first).
-    Candidates.Sort([](const FRegionCandidate& A, const FRegionCandidate& B)
-        {
-            return A.Score > B.Score;
-        });
-
-    // Mark existing slots for update or fade-out.
-    for (int32 s = 0; s < MaxTransitionSlots; ++s)
-    {
-        FTransitionSlotState& Slot = TransitionSlots[s];
-        if (!Slot.Region.IsValid())
-        {
-            // Slot is free -- mark as fully faded to allow reassignment.
-            Slot.bFadingOut = true;
-            Slot.Weight = 0.f;
-            continue;
-        }
-
-        // Check if this region is still in the candidate list.
-        bool bStillNeeded = false;
-        for (int32 c = 0; c < FMath::Min(MaxTransitionSlots, Candidates.Num()); ++c)
-        {
-            if (Candidates[c].Region == Slot.Region.Get())
-            {
-                bStillNeeded = true;
-                // Update boundary data each frame (camera moved).
-                Slot.BoundaryPoint = Candidates[c].BoundaryPt;
-                Slot.OutwardNormal = Candidates[c].Normal;
-                Slot.CameraDistance = Candidates[c].CamDist;
-                break;
-            }
-        }
-
-        if (!bStillNeeded && !Slot.bFadingOut)
-        {
-            Slot.bFadingOut = true;
-        }
-    }
-
-    // Assign free slots to top candidates that don't have a slot yet.
-    for (int32 c = 0; c < Candidates.Num() && c < MaxTransitionSlots; ++c)
-    {
-        AWaterRegionActor* CandRegion = Candidates[c].Region;
-
-        // Check if already has a slot.
-        bool bAlreadyAssigned = false;
-        for (int32 s = 0; s < MaxTransitionSlots; ++s)
-        {
-            if (TransitionSlots[s].Region.Get() == CandRegion)
-            {
-                bAlreadyAssigned = true;
-                break;
-            }
-        }
-        if (bAlreadyAssigned) continue;
-
-        // Find a free slot (weight == 0 and fading out).
-        for (int32 s = 0; s < MaxTransitionSlots; ++s)
-        {
-            FTransitionSlotState& Slot = TransitionSlots[s];
-            if (Slot.Weight < 0.001f && (Slot.bFadingOut || !Slot.Region.IsValid()))
-            {
-                // Assign this candidate to the slot.
-                Slot.Region = CandRegion;
-                Slot.BoundaryPoint = Candidates[c].BoundaryPt;
-                Slot.OutwardNormal = Candidates[c].Normal;
-                Slot.HeightInner = CandRegion->RegionData->BaseWaterHeight;
-                Slot.HeightOuter = DefaultHeight;
-                Slot.BlendRadius = CandRegion->RegionData->BlendRadius;
-                Slot.Weight = 0.f;
-                Slot.bFadingOut = false;
-                Slot.CameraDistance = Candidates[c].CamDist;
-                break;
-            }
-        }
-    }
-
-    // Update fade weights.
-    for (int32 s = 0; s < MaxTransitionSlots; ++s)
-    {
-        FTransitionSlotState& Slot = TransitionSlots[s];
-        if (Slot.bFadingOut)
-        {
-            Slot.Weight = FMath::Max(0.f, Slot.Weight - SlotFadeSpeed * DeltaTime);
-            if (Slot.Weight <= 0.f)
-            {
-                // Fully faded -- release the slot.
-                Slot.Region.Reset();
-                Slot.bFadingOut = false;
-            }
-        }
-        else if (Slot.Region.IsValid())
-        {
-            Slot.Weight = FMath::Min(1.f, Slot.Weight + SlotFadeSpeed * DeltaTime);
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-//  WriteTransitionSlotsMPC
-//  Writes all 8 slot parameters to MPC_Ocean.
-//  The material evaluates each active slot's signed half-plane distance,
-//  blends heights, and overrides the height field in transition zones.
-// ---------------------------------------------------------------------------
-void UOceanSubsystem::WriteTransitionSlotsMPC() const
-{
-    UWorld* World = CachedWorld.Get();
-    if (!World || !OceanMPC) return;
-
-    UMaterialParameterCollectionInstance* MPCI =
-        World->GetParameterCollectionInstance(OceanMPC);
-    if (!MPCI) return;
-
-    for (int32 s = 0; s < MaxTransitionSlots; ++s)
-    {
-        const FTransitionSlotState& Slot = TransitionSlots[s];
-        const FString Suffix = FString::FromInt(s);
-
-        MPCI->SetScalarParameterValue(
-            *FString::Printf(TEXT("Slot_%d_CenterX"), s), Slot.BoundaryPoint.X);
-        MPCI->SetScalarParameterValue(
-            *FString::Printf(TEXT("Slot_%d_CenterY"), s), Slot.BoundaryPoint.Y);
-        MPCI->SetScalarParameterValue(
-            *FString::Printf(TEXT("Slot_%d_NormalX"), s), Slot.OutwardNormal.X);
-        MPCI->SetScalarParameterValue(
-            *FString::Printf(TEXT("Slot_%d_NormalY"), s), Slot.OutwardNormal.Y);
-        MPCI->SetScalarParameterValue(
-            *FString::Printf(TEXT("Slot_%d_HeightInner"), s), Slot.HeightInner);
-        MPCI->SetScalarParameterValue(
-            *FString::Printf(TEXT("Slot_%d_HeightOuter"), s), Slot.HeightOuter);
-        MPCI->SetScalarParameterValue(
-            *FString::Printf(TEXT("Slot_%d_BlendRadius"), s), Slot.BlendRadius);
-        MPCI->SetScalarParameterValue(
-            *FString::Printf(TEXT("Slot_%d_Weight"), s), Slot.Weight);
     }
 }
 
@@ -1348,14 +1158,16 @@ UOceanHeightFieldGenerator* UOceanSubsystem::GetHeightFieldGenerator() const
 //  Terms (all at the player's XY, current time):
 //    RegionalBase   = GetWaterHeightAtPosition (exact, no waves)
 //    HeightFieldRB  = bilinear readback of the baked texture
-//    SlotCorrected  = HeightFieldRB with transition-slot overrides applied
 //    PrimaryWave    = octave 0 Gerstner
 //    DetailWave     = octaves 1..MaxOctave Gerstner
 //    PhysicsHeight  = RegionalBase + PrimaryWave        (what the sub rides)
-//    VisualHeight   = SlotCorrected + PrimaryWave + DetailWave
-//    Residual_Base  = | SlotCorrected - RegionalBase |  (height field accuracy)
-//    Residual_Prim  = | (SlotCorrected+PrimaryWave) - PhysicsHeight |
+//    VisualHeight   = HeightFieldRB + PrimaryWave + DetailWave
+//    Residual_Base  = | HeightFieldRB - RegionalBase |  (height field accuracy)
+//    Residual_Prim  = | (HeightFieldRB+PrimaryWave) - PhysicsHeight |
 //    Residual_Full  = | VisualHeight - PhysicsHeight |  (includes visual detail)
+//    MatPrimWave    = octave 0 rebuilt from the packed MPC Ocean_Oct1 value
+//    Residual_MatPrim = | MatPrimWave - PrimaryWave |   (material input vs physics)
+//    Red sphere     = HeightFieldRB + MPC waves (where the screen should be)
 // ---------------------------------------------------------------------------
 void UOceanSubsystem::DebugReconstructSurface() const
 {
@@ -1393,20 +1205,26 @@ void UOceanSubsystem::DebugReconstructSurface() const
             bHaveRB = Gen->SampleHeightFieldBilinear(XY, HeightFieldRB);
         }
 
-        // Diagnostic only -- the material has NO slot loop, so this is unused.
-        const float SlotCorrected = EvaluateSlotCorrectionCPU(XY, HeightFieldRB);
-
         // Sample at the canonical surface Z (same probe as the height field).
         const FWaterSample S = SampleWaterAt(FVector(XY.X, XY.Y, GetDefaultWaterHeight()));
-        const float PrimW = EvaluateGerstnerOctave(0, XY, Time,
-            S.WaveAmplitude, S.WaveSpeed, S.WaveDirection, S.WaveLengthScale);
+        const float PrimW = OceanGerstner::EvaluateZ(BuildOctaveAt(0, S), XY, Time);
 
         float DetailW = 0.f;
         for (int32 i = 1; i <= MaxOct; ++i)
         {
-            DetailW += EvaluateGerstnerOctave(i, XY, Time,
-                S.WaveAmplitude, S.WaveSpeed, S.WaveDirection, S.WaveLengthScale);
+            DetailW += OceanGerstner::EvaluateZ(BuildOctaveAt(i, S), XY, Time);
         }
+
+        // Material-side reconstruction from the EXACT values written to MPC
+        // this frame (what MF_Ocean_HeightOffset receives).
+        const float MatPrimW = OceanGerstner::EvaluateZFromMPC(FrameCache.MPCOctaves[0], XY);
+        float MatW = MatPrimW;
+        for (int32 i = 1; i <= MaxOct; ++i)
+        {
+            MatW += OceanGerstner::EvaluateZFromMPC(FrameCache.MPCOctaves[i], XY);
+        }
+        const float MatVisualHeight = HeightFieldRB + MatW;
+        const float ResidualMatPrim = FMath::Abs(MatPrimW - PrimW);
 
         const float PhysicsHeight = RegionalBase + PrimW;
 
@@ -1431,8 +1249,6 @@ void UOceanSubsystem::DebugReconstructSurface() const
         Msg(KeyBase + 2, FColor::White,
             FString::Printf(TEXT("  HeightFieldRB  = %.1f %s"), HeightFieldRB,
                 bHaveRB ? TEXT("") : TEXT("(no readback)")));
-        Msg(KeyBase + 3, FColor::White,
-            FString::Printf(TEXT("  SlotCorrected  = %.1f (UNUSED diag)"), SlotCorrected));
         Msg(KeyBase + 4, FColor::White,
             FString::Printf(TEXT("  PrimaryWave    = %.1f"), PrimW));
         Msg(KeyBase + 5, FColor::White,
@@ -1449,6 +1265,14 @@ void UOceanSubsystem::DebugReconstructSurface() const
             FString::Printf(TEXT("  Residual_Prim  = %.1f  (target <50)"), ResidualPrim));
         Msg(KeyBase + 10, FColor::Orange,
             FString::Printf(TEXT("  Residual_Full  = %.1f  (incl. visual detail)"), ResidualFull));
+        Msg(KeyBase + 11, FColor::White,
+            FString::Printf(TEXT("  MatPrimWave    = %.1f  (from MPC Ocean_Oct1)"), MatPrimW));
+        Msg(KeyBase + 12,
+            ResidualMatPrim < 5.f ? FColor::Green : FColor::Red,
+            FString::Printf(TEXT("  Residual_MatPrim = %.1f  (MPC vs physics, target <5)"), ResidualMatPrim));
+        Msg(KeyBase + 13, FColor::White,
+            FString::Printf(TEXT("  Amp local=%.1f  MPC=%.1f  T=%.2f  T_MPC=%.2f"),
+                S.WaveAmplitude, FrameCache.MPCOctaves[0].B, Time, FrameCache.WaveTime));
 
         // --- World overlay: vertical marks at the player's XY ---
         const FVector Base(P.X, P.Y, RegionalBase);
@@ -1459,6 +1283,8 @@ void UOceanSubsystem::DebugReconstructSurface() const
         DrawDebugSphere(World, FVector(P.X, P.Y, VisualHeight), 90.f, 8, FColor::Orange, false, 0.f, 0, 4.f);
         // Regional base mark (white sphere)
         DrawDebugSphere(World, FVector(P.X, P.Y, RegionalBase), 60.f, 8, FColor::White, false, 0.f, 0, 3.f);
+        // Material height mark (red sphere): height field + waves from MPC
+        DrawDebugSphere(World, FVector(P.X, P.Y, MatVisualHeight), 75.f, 8, FColor::Red, false, 0.f, 0, 4.f);
 
         // --- Surface patch grid -------------------------------------------
         // Draws a cyan wireframe sheet at the PHYSICS surface height
@@ -1502,4 +1328,4 @@ void UOceanSubsystem::DebugReconstructSurface() const
 
         ++PlayerNum;
     }
-}
+}

@@ -72,6 +72,20 @@ void AOceanSurfaceActor::BeginPlay()
                 GetActorLocation().Z);
         }
     }
+
+    // Tell the subsystem how finely the mesh samples the waves, so it can
+    // fade detail octaves the mesh cannot draw (see MinVerticesPerWave).
+    if (OceanSys)
+    {
+        const float VertexSpacing =
+            (OceanHalfExtent * 2.f) / static_cast<float>(FMath::Max(MeshSubdivisions, 1));
+        OceanSys->SetSurfaceMeshSampling(VertexSpacing, MinVerticesPerWave);
+        UE_LOG(LogTemp, Log,
+            TEXT("[OceanSurfaceActor] '%s' VertexSpacing=%.0f cm (HalfExtent=%.0f, Subdivisions=%d). ")
+            TEXT("Shortest drawable wave = %.0f cm."),
+            *GetName(), VertexSpacing, OceanHalfExtent, MeshSubdivisions,
+            VertexSpacing * MinVerticesPerWave);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -93,8 +107,12 @@ void AOceanSurfaceActor::ApplyMeshScale()
     const float PlaneSizeUU = 100.f;
     const float ScaleFactor = (OceanHalfExtent * 2.f) / PlaneSizeUU;
 
+    // Only the root (surface) is scaled. The underside is attached to it and
+    // inherits that scale, so its own relative scale must stay 1. Scaling it
+    // too made it ScaleFactor^2 larger (vertices kilometres apart), so it
+    // could not show WPO waves.
     SurfaceMeshComponent->SetRelativeScale3D(FVector(ScaleFactor, ScaleFactor, 1.f));
-    UndersideMeshComponent->SetRelativeScale3D(FVector(ScaleFactor, ScaleFactor, 1.f));
+    UndersideMeshComponent->SetRelativeScale3D(FVector::OneVector);
 }
 
 // ---------------------------------------------------------------------------
@@ -206,7 +224,8 @@ void AOceanSurfaceActor::PostEditChangeProperty(FPropertyChangedEvent& PropertyC
         const float PlaneSizeUU = 100.f;
         const float ScaleFactor = (OceanHalfExtent * 2.f) / PlaneSizeUU;
         SurfaceMeshComponent->SetRelativeScale3D(FVector(ScaleFactor, ScaleFactor, 1.f));
-        UndersideMeshComponent->SetRelativeScale3D(FVector(ScaleFactor, ScaleFactor, 1.f));
+        // Underside inherits the root's scale (see ApplyMeshScale).
+        UndersideMeshComponent->SetRelativeScale3D(FVector::OneVector);
     }
 }
-#endif
+#endif

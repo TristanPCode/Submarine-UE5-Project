@@ -64,26 +64,6 @@ public:
     virtual float EvaluateWeight(const FVector& WorldPos) const
         PURE_VIRTUAL(AWaterRegionActor::EvaluateWeight, return 0.f;);
 
-    // Returns the nearest point on this region's boundary to QueryXY,
-    // and the outward-facing normal at that point.
-    // Used by OceanSubsystem to populate dynamic transition MPC slots.
-    // OutBoundaryPoint and OutOutwardNormal are in world-space XY.
-    // Returns false if the region cannot provide boundary data.
-    virtual bool GetNearestBoundaryPoint(
-        const FVector2D& QueryXY,
-        FVector2D& OutBoundaryPoint,
-        FVector2D& OutOutwardNormal) const
-    {
-        // Default: use actor location as center, outward normal = toward query.
-        const FVector2D Center(GetActorLocation().X, GetActorLocation().Y);
-        const FVector2D ToQuery = QueryXY - Center;
-        const float Dist = ToQuery.Size();
-        if (Dist < 0.01f) return false;
-        OutBoundaryPoint = Center;
-        OutOutwardNormal = ToQuery / Dist;
-        return true;
-    }
-
     // -----------------------------------------------------------------------
     //  Editor visualization toggles
     // -----------------------------------------------------------------------

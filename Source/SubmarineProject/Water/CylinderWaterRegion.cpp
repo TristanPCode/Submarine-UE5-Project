@@ -76,29 +76,6 @@ float ACylinderWaterRegion::EvaluateWeight(const FVector& WorldPos) const
 }
 
 // ---------------------------------------------------------------------------
-//  GetNearestBoundaryPoint (Cylinder)
-//  Same as Sphere -- nearest point on the circular XY boundary.
-// ---------------------------------------------------------------------------
-bool ACylinderWaterRegion::GetNearestBoundaryPoint(
-    const FVector2D& QueryXY,
-    FVector2D& OutBoundaryPoint,
-    FVector2D& OutOutwardNormal) const
-{
-    const FVector2D Center(GetActorLocation().X, GetActorLocation().Y);
-    const FVector2D ToQuery = QueryXY - Center;
-    const float Dist = ToQuery.Size();
-    if (Dist < 0.01f)
-    {
-        OutBoundaryPoint = Center + FVector2D(Radius, 0.f);
-        OutOutwardNormal = FVector2D(1.f, 0.f);
-        return true;
-    }
-    OutOutwardNormal = ToQuery / Dist;
-    OutBoundaryPoint = Center + OutOutwardNormal * Radius;
-    return true;
-}
-
-// ---------------------------------------------------------------------------
 //  BuildFillPreviewMesh
 //  Circle at Z=0 local space representing the horizontal footprint.
 // ---------------------------------------------------------------------------

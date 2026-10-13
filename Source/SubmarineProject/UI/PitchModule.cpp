@@ -53,7 +53,9 @@ void UPitchModule::RefreshVisuals_Implementation()
 
     if (!IsValid(DataSource.GetObject())) return;
 
-    const float CurrentPitch = DataSource->GetCurrentPitch();
+    // Wished pitch, not applied: near the surface the gauge shows the
+    // player's intent even when surface leveling caps the real pitch.
+    const float CurrentPitch = DataSource->GetWishedPitch();
 
     if (ShouldLog(DebugSettings ? (DebugSettings->bLogModuleRefresh && DebugSettings->bLogPitch) : false))
         UE_LOG(LogTemp, Log,
@@ -72,7 +74,9 @@ void UPitchModule::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
     // Gate checked in base class -- only runs when bContinuousTickEnabled
     if (!IsValid(DataSource.GetObject())) return;
 
-    const float CurrentPitch = DataSource->GetCurrentPitch();
+    // Wished pitch, not applied: near the surface the gauge shows the
+    // player's intent even when surface leveling caps the real pitch.
+    const float CurrentPitch = DataSource->GetWishedPitch();
 
     // Only update if pitch changed beyond tolerance
     if (FMath::Abs(CurrentPitch - LastPitch) < PitchChangeTolerance) return;

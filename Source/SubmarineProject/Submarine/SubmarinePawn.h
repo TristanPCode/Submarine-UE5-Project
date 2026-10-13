@@ -168,6 +168,16 @@ public:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Submarine|State")
     float CurrentPitch = 0.f;
 
+    /**
+     * Pitch the applied pitch chases this tick (degrees, + = nose up).
+     * Equals TargetPitch (wished) unless surface leveling limits it.
+     */
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Submarine|State")
+    float NerfedTargetPitch = 0.f;
+
+    /** Player-intended pitch (degrees, + = nose up), before surface leveling. */
+    virtual float GetWishedPitch() const override { return TargetPitch; }
+
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Submarine|State")
     ESubmarineCameraState CameraState = ESubmarineCameraState::POV;
 
@@ -348,6 +358,33 @@ private:
     /** Accumulated angular momentum while holding vertical key (degrees/s) */
     float PitchAngularMomentum = 0.f;
 
+    // -- Surface pitch leveling ---------------------------------------------
+
+    /** Forward wave slope after low-pass + rate limit (degrees, + = surface rises ahead) */
+    float SmoothedSurfaceSlopeDeg = 0.f;
+
+    /** Depth blend weight used last tick (0 = deep, 1 = at surface). Debug only. */
+    float SurfaceLevelingWeight = 0.f;
+
+    /** Throttle timer for the [PitchLeveling] log */
+    float PitchLevelingLogTimer = 0.f;
+
+    /**
+     * Returns the pitch the applied pitch should chase this tick.
+     * Near the surface, caps pitch at the smoothed forward wave slope:
+     * climbing a wave -> max(Slope - SurfacePitchSafetyMarginDeg, 0),
+     * flat sea -> 0, descending wave -> Slope (negative, nose follows the
+     * surface down). Blended by depth, then clamped to +/-MaxPitchAngle.
+     * Tunable: all params in SubmarineCharacteristics "Surface|PitchLeveling".
+     */
+    float ComputeSurfaceNerfedPitch(float WishedPitch, float DeltaTime);
+
+    /** Primary-wave slope along the horizontal heading (degrees, + = surface rises ahead). */
+    float ComputeForwardSurfaceSlopeDeg() const;
+
+    /** Throttled [PitchLeveling] log, gated by bLogSurfacePitchLeveling. */
+    void LogSurfacePitchLeveling(float DeltaTime);
+
     /** Resolved vertical state count (safe, odd, >=3) cached on BeginPlay */
     int32 SafeVerticalStateCount = 11;
 
@@ -435,6 +472,8 @@ private:
     void OnCamera3rdPersonTriggered(const FInputActionValue& Value);
     void OnCamera3rdPersonCompleted(const FInputActionValue& Value);
 
+    // Bound with AddDynamic in BeginPlay: must be a UFUNCTION or binding fails.
+    UFUNCTION()
     void OnTorpedoFiredForVulnerability(ETorpedoType TorpedoType, ATorpedoPawn* TorpedoActor);
 
     // -- Helpers -----------------------------------------------------------

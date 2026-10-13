@@ -68,52 +68,6 @@ float ABoxWaterRegion::EvaluateWeight(const FVector& WorldPos) const
 }
 
 // ---------------------------------------------------------------------------
-//  GetNearestBoundaryPoint (Box)
-//  Clamps QueryXY to the box boundary and returns the outward normal
-//  of the nearest face. Exact -- no approximation.
-// ---------------------------------------------------------------------------
-bool ABoxWaterRegion::GetNearestBoundaryPoint(
-    const FVector2D& QueryXY,
-    FVector2D& OutBoundaryPoint,
-    FVector2D& OutOutwardNormal) const
-{
-    const FVector Center = GetActorLocation();
-    const FVector2D Center2D(Center.X, Center.Y);
-    const FVector2D HalfExt(BoxHalfExtent.X, BoxHalfExtent.Y);
-
-    // Signed distances to each face in local XY.
-    const FVector2D LocalQ = QueryXY - Center2D;
-    const float dPX = HalfExt.X - LocalQ.X;  // dist to +X face
-    const float dNX = HalfExt.X + LocalQ.X;  // dist to -X face
-    const float dPY = HalfExt.Y - LocalQ.Y;
-    const float dNY = HalfExt.Y + LocalQ.Y;
-
-    // Nearest face = smallest distance.
-    float MinDist = dPX;
-    OutOutwardNormal = FVector2D(1.f, 0.f);
-    if (dNX < MinDist) { MinDist = dNX; OutOutwardNormal = FVector2D(-1.f, 0.f); }
-    if (dPY < MinDist) { MinDist = dPY; OutOutwardNormal = FVector2D(0.f, 1.f); }
-    if (dNY < MinDist) { MinDist = dNY; OutOutwardNormal = FVector2D(0.f, -1.f); }
-
-    // Boundary point = query clamped to box surface on nearest face.
-    const FVector2D Clamped = FVector2D(
-        FMath::Clamp(LocalQ.X, -HalfExt.X, HalfExt.X),
-        FMath::Clamp(LocalQ.Y, -HalfExt.Y, HalfExt.Y));
-    OutBoundaryPoint = Center2D + Clamped * OutOutwardNormal.GetAbs()
-        + FVector2D(
-            OutOutwardNormal.X != 0.f ? OutOutwardNormal.X * HalfExt.X : LocalQ.X,
-            OutOutwardNormal.Y != 0.f ? OutOutwardNormal.Y * HalfExt.Y : LocalQ.Y);
-
-    // Simpler: project onto the face.
-    if (FMath::Abs(OutOutwardNormal.X) > 0.5f)
-        OutBoundaryPoint = Center2D + FVector2D(OutOutwardNormal.X * HalfExt.X, LocalQ.Y);
-    else
-        OutBoundaryPoint = Center2D + FVector2D(LocalQ.X, OutOutwardNormal.Y * HalfExt.Y);
-
-    return true;
-}
-
-// ---------------------------------------------------------------------------
 //  Editor
 // ---------------------------------------------------------------------------
 #if WITH_EDITOR

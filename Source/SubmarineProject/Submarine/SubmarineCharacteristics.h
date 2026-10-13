@@ -644,6 +644,95 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Surface|SpeedBonus")
     bool bEnableSurfaceSpeedBonus = true;
 
+    // -- Surface Pitch Leveling -----------------------------------------------
+    //  Near the surface, the APPLIED pitch is limited so the nose cannot point
+    //  higher than the wave slope ahead. The player's WISHED pitch is kept
+    //  untouched (states, snap, HUD). See ASubmarinePawn::ComputeSurfaceNerfedPitch.
+    //  Sign convention: positive pitch = nose up.
+
+    /** Master switch for surface pitch leveling. */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Surface|PitchLeveling")
+    bool bEnableSurfacePitchLeveling = true;
+
+    /**
+     * Depth below the surface at which leveling starts to act.
+     * Leveling weight is 0 at this depth and 1 at the surface (and above).
+     * Units: cm.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Surface|PitchLeveling",
+        meta = (ClampMin = "1.0", EditCondition = "bEnableSurfacePitchLeveling"))
+    float SurfaceLevelingDepth = 600.f;
+
+    /**
+     * Shape of the depth blend. Weight = (1 - Depth / SurfaceLevelingDepth) ^ Exponent.
+     * 1 = linear. > 1 = leveling kicks in late (only very close to the surface).
+     * < 1 = leveling kicks in early. Unitless.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Surface|PitchLeveling",
+        meta = (ClampMin = "0.1", ClampMax = "8.0", EditCondition = "bEnableSurfacePitchLeveling"))
+    float SurfaceLevelingExponent = 1.5f;
+
+    /**
+     * Margin subtracted from the forward wave slope when climbing a wave
+     * (slope > 0). The climbing ceiling never drops below 0 because of it.
+     * On a descending wave (slope <= 0) the ceiling is the slope itself, with
+     * no margin, so the nose follows the surface down. Units: deg.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Surface|PitchLeveling",
+        meta = (ClampMin = "0.0", ClampMax = "45.0", EditCondition = "bEnableSurfacePitchLeveling"))
+    float SurfacePitchSafetyMarginDeg = 2.f;
+
+    /**
+     * Low-pass time constant applied to the measured forward wave slope.
+     * 0 = no smoothing. Larger = slower, calmer ceiling. Units: s.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Surface|PitchLeveling",
+        meta = (ClampMin = "0.0", ClampMax = "10.0", EditCondition = "bEnableSurfacePitchLeveling"))
+    float SurfaceSlopeResponseTime = 0.4f;
+
+    /**
+     * Maximum rate at which the smoothed wave slope may change.
+     * Applied after the low-pass. Units: deg/s.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Surface|PitchLeveling",
+        meta = (ClampMin = "0.1", EditCondition = "bEnableSurfacePitchLeveling"))
+    float SurfaceSlopeMaxRateDegPerSec = 15.f;
+
+    // -- Anti-Breach ----------------------------------------------------------
+    //  Downward acceleration near the surface so the hull does not pop out of
+    //  the water. See USubmarinePhysicsComponent::ComputeAntiBreachForce.
+
+    /** Master switch for the anti-breach force. */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Surface|AntiBreach")
+    bool bEnableAntiBreach = true;
+
+    /**
+     * If true, the anti-breach force only acts while the submarine is closing
+     * on the surface (depth decreasing). This covers both cases: the sub
+     * rising, and the surface dropping away under it on a descending wave.
+     * If false, it acts whenever the sub is inside AntiBreachStartDepth.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Surface|AntiBreach",
+        meta = (EditCondition = "bEnableAntiBreach"))
+    bool bAntiBreachOnlyWhenClosingOnSurface = true;
+
+    /**
+     * Depth below the surface at which the anti-breach force starts.
+     * Force is 0 at this depth and AntiBreachMaxAccel at the surface (and above).
+     * Units: cm.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Surface|AntiBreach",
+        meta = (ClampMin = "1.0", EditCondition = "bEnableAntiBreach"))
+    float AntiBreachStartDepth = 300.f;
+
+    /**
+     * Downward acceleration applied at the surface. Units: cm/s^2.
+     * For reference, GravityAcceleration is in the same unit.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Surface|AntiBreach",
+        meta = (ClampMin = "0.0", EditCondition = "bEnableAntiBreach"))
+    float AntiBreachMaxAccel = 600.f;
+
     // -- Regional Drag --------------------------------------------------------
 
     /**
@@ -814,6 +903,13 @@ public:
     /** Log [AntiStuck] messages (anti-stuck fire events) */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Physics|Debug")
     bool bLogAntiStuck = true;
+
+    /**
+     * Log [PitchLeveling] messages (wished / nerfed / applied pitch, slope,
+     * leveling weight, anti-breach accel). Throttled by PhysicsLogFrequency.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Physics|Debug")
+    bool bLogSurfacePitchLeveling = false;
 
     // -- Camera (POV) -----------------------------
 

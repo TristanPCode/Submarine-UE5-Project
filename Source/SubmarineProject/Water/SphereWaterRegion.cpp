@@ -53,31 +53,6 @@ float ASphereWaterRegion::EvaluateWeight(const FVector& WorldPos) const
 }
 
 // ---------------------------------------------------------------------------
-//  GetNearestBoundaryPoint (Sphere)
-//  The nearest boundary point is simply the point on the sphere's XY circle
-//  closest to QueryXY. The outward normal is the radial direction.
-// ---------------------------------------------------------------------------
-bool ASphereWaterRegion::GetNearestBoundaryPoint(
-    const FVector2D& QueryXY,
-    FVector2D& OutBoundaryPoint,
-    FVector2D& OutOutwardNormal) const
-{
-    const FVector2D Center(GetActorLocation().X, GetActorLocation().Y);
-    const FVector2D ToQuery = QueryXY - Center;
-    const float Dist = ToQuery.Size();
-    if (Dist < 0.01f)
-    {
-        // Query is at the center -- pick arbitrary outward direction.
-        OutBoundaryPoint = Center + FVector2D(Radius, 0.f);
-        OutOutwardNormal = FVector2D(1.f, 0.f);
-        return true;
-    }
-    OutOutwardNormal = ToQuery / Dist;
-    OutBoundaryPoint = Center + OutOutwardNormal * Radius;
-    return true;
-}
-
-// ---------------------------------------------------------------------------
 //  BuildFillPreviewMesh
 //  Generates a circle polygon approximation at Z=0 local space.
 // ---------------------------------------------------------------------------

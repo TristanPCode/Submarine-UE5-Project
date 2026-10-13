@@ -64,13 +64,6 @@ public:
     // EvaluateWeight override - spline polygon logic
     virtual float EvaluateWeight(const FVector& WorldPos) const override;
 
-    // Returns the nearest polygon edge point and its outward normal.
-    // Uses the same PolygonCache as EvaluateWeight for consistency.
-    virtual bool GetNearestBoundaryPoint(
-        const FVector2D& QueryXY,
-        FVector2D& OutBoundaryPoint,
-        FVector2D& OutOutwardNormal) const override;
-
     virtual void BeginPlay() override;
 
 #if WITH_EDITOR

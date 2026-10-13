@@ -159,10 +159,6 @@ public:
     // -----------------------------------------------------------------------
 
     virtual float EvaluateWeight(const FVector& WorldPos) const override;
-    virtual bool GetNearestBoundaryPoint(
-        const FVector2D& QueryXY,
-        FVector2D& OutBoundaryPoint,
-        FVector2D& OutOutwardNormal) const override;
     virtual void BeginPlay() override;
     virtual void PostInitializeComponents() override;
     virtual void OnConstruction(const FTransform& Transform) override;

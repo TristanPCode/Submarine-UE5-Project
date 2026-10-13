@@ -177,67 +177,6 @@ float ASplineWaterRegion::DistanceToPolygonEdge2D(const FVector2D& Point) const
 }
 
 // ---------------------------------------------------------------------------
-//  GetNearestBoundaryPoint (Spline polygon)
-//  Finds the nearest point on the polygon edge to QueryXY.
-//  Uses PolygonCache (actor local space) + actor transform.
-// ---------------------------------------------------------------------------
-bool ASplineWaterRegion::GetNearestBoundaryPoint(
-    const FVector2D& QueryXY,
-    FVector2D& OutBoundaryPoint,
-    FVector2D& OutOutwardNormal) const
-{
-    if (!bPolygonCacheValid || PolygonCache.Num() < 3) return false;
-
-    const FTransform ActorTransform = GetActorTransform();
-    const FVector LocalPos3D = ActorTransform.InverseTransformPosition(
-        FVector(QueryXY.X, QueryXY.Y, GetActorLocation().Z));
-    const FVector2D LocalQuery(LocalPos3D.X, LocalPos3D.Y);
-
-    const int32 N = PolygonCache.Num();
-    float BestDistSq = FLT_MAX;
-    FVector2D BestPoint = PolygonCache[0];
-    FVector2D BestEdgeDir = FVector2D(1.f, 0.f);
-
-    for (int32 i = 0, j = N - 1; i < N; j = i++)
-    {
-        const FVector2D& Pi = PolygonCache[i];
-        const FVector2D& Pj = PolygonCache[j];
-        const FVector2D Edge = Pi - Pj;
-        const float EdgeLenSq = Edge.SizeSquared();
-        if (EdgeLenSq < 0.001f) continue;
-
-        const float T = FMath::Clamp(
-            FVector2D::DotProduct(LocalQuery - Pj, Edge) / EdgeLenSq,
-            0.f, 1.f);
-        const FVector2D Closest = Pj + T * Edge;
-        const float DistSq = (LocalQuery - Closest).SizeSquared();
-
-        if (DistSq < BestDistSq)
-        {
-            BestDistSq = DistSq;
-            BestPoint = Closest;
-            BestEdgeDir = Edge.GetSafeNormal();
-        }
-    }
-
-    const FVector WorldPoint3D = ActorTransform.TransformPosition(
-        FVector(BestPoint.X, BestPoint.Y, 0.f));
-    OutBoundaryPoint = FVector2D(WorldPoint3D.X, WorldPoint3D.Y);
-
-    FVector2D CandidateNormal(-BestEdgeDir.Y, BestEdgeDir.X);
-    FVector2D Centroid = FVector2D::ZeroVector;
-    for (const FVector2D& P : PolygonCache) Centroid += P;
-    Centroid /= (float)N;
-    if (FVector2D::DotProduct(CandidateNormal, BestPoint - Centroid) < 0.f)
-        CandidateNormal = -CandidateNormal;
-
-    const FVector WorldNormal3D = ActorTransform.TransformVector(
-        FVector(CandidateNormal.X, CandidateNormal.Y, 0.f));
-    OutOutwardNormal = FVector2D(WorldNormal3D.X, WorldNormal3D.Y).GetSafeNormal();
-    return true;
-}
-
-// ---------------------------------------------------------------------------
 //  BuildFillPreviewMesh
 //  Fan triangulation of the polygon cache around its centroid.
 // ---------------------------------------------------------------------------

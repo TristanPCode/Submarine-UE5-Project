@@ -144,13 +144,29 @@ public:
     // -----------------------------------------------------------------------
     FOceanSurfaceSample QuerySurface(const FVector2D& XY, float Time) const;
 
-    // Evaluates a single Gerstner octave's Z displacement at XY/Time.
-    // Shared canonical implementation. OctaveIndex selects OceanGerstner tables.
-    // BaseAmplitude/BaseSpeed/BaseDirection/WaveLengthScale come from the
-    // region sample at XY. This is the EXACT formula the material must mirror.
+    // Evaluates a single Gerstner octave's Z displacement at XY/Time with
+    // explicit base parameters. Thin wrapper over OceanGerstner::BuildOctave +
+    // EvaluateZ (OceanTypes.h), the single formula shared with the material.
     float EvaluateGerstnerOctave(int32 OctaveIndex, const FVector2D& XY,
         float Time, float BaseAmplitude, float BaseSpeed,
         const FVector2D& BaseDirection, float WaveLengthScale) const;
+
+    // Builds one resolved octave the way physics AND the material use it:
+    // amplitude from AmpSource (the region sample), wave shape (speed,
+    // direction, wavelength scale) from GetWaveShapeSample().
+    OceanGerstner::FOctave BuildOctaveAt(int32 OctaveIndex,
+        const FWaterSample& AmpSource) const;
+
+    // Source of the wave SHAPE (speed, direction, wavelength scale).
+    // Global for now (DefaultRegionData): the shared surface mesh can only
+    // render one shape, and blending shape per position sweeps the phase
+    // (waves race when the sub crosses region blends). Isolated here so it
+    // can be changed if per-region shape is ever reintroduced.
+    FWaterSample GetWaveShapeSample() const;
+
+    // Called by AOceanSurfaceActor at BeginPlay. VertexSpacing in cm,
+    // MinVerticesPerWave unitless. 0 spacing disables the octave fade.
+    void SetSurfaceMeshSampling(float VertexSpacing, float MinVerticesPerWave);
 
     // -----------------------------------------------------------------------
     //  Debug reconstruction API (validation tooling)
@@ -162,12 +178,6 @@ public:
     // sample at XY. MaxOctave=0 gives primary only; MaxOctave=3 gives all.
     // Used to measure how much visual-only detail (Oct1-3) contributes.
     float EvaluateGerstnerSum(const FVector2D& XY, float Time, int32 MaxOctave) const;
-
-    // Returns the transition-slot correction that the material applies at XY,
-    // given the raw height-field value. Mirrors the material slot loop exactly.
-    // This is the canonical slot formula -- the material must match THIS.
-    // Returns the corrected height (not the delta).
-    float EvaluateSlotCorrectionCPU(const FVector2D& XY, float HeightFieldValue) const;
 
     // Returns true if WorldPos is currently below the water surface.
     UFUNCTION(BlueprintCallable, Category = "Ocean")
@@ -253,48 +263,15 @@ private:
     // Cached world pointer to avoid repeated GetWorld() calls.
     TWeakObjectPtr<UWorld> CachedWorld;
 
-    // -----------------------------------------------------------------------
-    //  Dynamic transition slots
-    //  Each slot represents one active region boundary being corrected
-    //  at full float precision in the material.
-    // -----------------------------------------------------------------------
+    // Surface mesh sampling (from AOceanSurfaceActor). See SetSurfaceMeshSampling.
+    float SurfaceVertexSpacing = 0.f;      // cm, 0 = unknown (no fade)
+    float SurfaceMinVerticesPerWave = 8.f; // unitless
+    bool bWarnedPrimaryUndersampled = false;
 
-    static constexpr int32 MaxTransitionSlots = 8;
-
-    struct FTransitionSlotState
-    {
-        // The region this slot tracks. Null = slot is free.
-        TWeakObjectPtr<AWaterRegionActor> Region;
-
-        // Last computed boundary data.
-        FVector2D BoundaryPoint = FVector2D::ZeroVector;
-        FVector2D OutwardNormal = FVector2D(1.f, 0.f);
-        float     HeightInner = 0.f;
-        float     HeightOuter = 0.f;
-        float     BlendRadius = 500.f;
-
-        // Fade weight [0,1]. Fades in when assigned, fades out when released.
-        float     Weight = 0.f;
-        bool      bFadingOut = false;
-
-        // Distance from nearest camera to this boundary (for priority).
-        float     CameraDistance = FLT_MAX;
-
-        bool IsActive() const { return Region.IsValid() && !bFadingOut; }
-        bool IsFree()   const { return Weight < 0.001f && bFadingOut; }
-    };
-
-    FTransitionSlotState TransitionSlots[MaxTransitionSlots];
-
-    // Fade speed: slots reach full weight in 0.5s, fade out in 0.5s.
-    static constexpr float SlotFadeSpeed = 2.f; // 1/0.5s
-
-    // Updates transition slot assignment and fade weights.
-    // Called from UpdateOceanFrame each tick.
-    void UpdateTransitionSlots(float DeltaTime);
-
-    // Writes all 8 slot MPC parameters.
-    void WriteTransitionSlotsMPC() const;
+    // Visual amplitude factor [0..1] for an octave given the mesh density:
+    // 1 when its wavelength spans >= MinVerticesPerWave vertices, fading to
+    // 0 at 75% of that. Isolated so the fade curve can be retuned.
+    float ComputeOctaveDrawableFactor(const OceanGerstner::FOctave& O) const;
 
     // -----------------------------------------------------------------------
     //  Validation / debug reconstruction
@@ -310,4 +287,4 @@ private:
     // height (CPU-reconstructed) at each local player position and prints
     // the residual breakdown. Toggled by the console var Ocean.DebugSurface.
     void DebugReconstructSurface() const;
-};
+};

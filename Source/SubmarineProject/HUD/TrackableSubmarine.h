@@ -142,6 +142,13 @@ public:
     /** Current pitch of the submarine in degrees. */
     virtual float GetCurrentPitch() const = 0;
 
+    /**
+     * Pitch the player is asking for (degrees, + = nose up), before any
+     * gameplay limit such as surface leveling. Shown by the HUD pitch gauge.
+     * Defaults to GetCurrentPitch() for implementers without such limits.
+     */
+    virtual float GetWishedPitch() const { return GetCurrentPitch(); }
+
     /** Current vertical state index (0 = full down, mid = flat, max = full up). */
     virtual int32 GetVerticalStateIndex() const = 0;
 

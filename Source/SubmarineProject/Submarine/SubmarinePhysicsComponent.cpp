@@ -47,6 +47,12 @@ void USubmarinePhysicsComponent::TickComponent(float DeltaTime, ELevelTick TickT
     CurrentDepth = WaterZ - Owner->GetActorLocation().Z;
     bAboveSurface = (CurrentDepth < 0.f);
 
+    DepthRate = (bHasPrevDepth && DeltaTime > KINDA_SMALL_NUMBER)
+        ? (CurrentDepth - PrevDepth) / DeltaTime
+        : 0.f;
+    PrevDepth = CurrentDepth;
+    bHasPrevDepth = true;
+
     // -------------------------------------------------------------------------
     //  Near-surface alpha
     // -------------------------------------------------------------------------
@@ -61,6 +67,7 @@ void USubmarinePhysicsComponent::TickComponent(float DeltaTime, ELevelTick TickT
     const FVector DepthForce = Stats->bEnableDepthPhysics ? ComputeDepthPressureForce() : FVector::ZeroVector;
     const FVector ThrustForce = ComputeThrustForce(Owner->GetActorForwardVector());
     const FVector AgitationForce = ComputeAgitationForce(Stats);
+    const FVector AntiBreachForce = ComputeAntiBreachForce(Stats);
 
     // -------------------------------------------------------------------------
     //  Angular perturbation smoothing
@@ -70,7 +77,7 @@ void USubmarinePhysicsComponent::TickComponent(float DeltaTime, ELevelTick TickT
     // -------------------------------------------------------------------------
     //  Integrate
     // -------------------------------------------------------------------------
-    FVector TotalForce = GravForce + BuoyForce + DragForce + DepthForce + ThrustForce + AgitationForce;
+    FVector TotalForce = GravForce + BuoyForce + DragForce + DepthForce + ThrustForce + AgitationForce + AntiBreachForce;
     TotalForce += AccumulatedForces;
     AccumulatedForces = FVector::ZeroVector;
 
@@ -339,6 +346,26 @@ FVector USubmarinePhysicsComponent::ComputeAgitationForce(
 }
 
 // ---------------------------------------------------------------------------
+//  ComputeAntiBreachForce
+//  Weight = clamp((AntiBreachStartDepth - CurrentDepth) / AntiBreachStartDepth, 0, 1)
+//  Accel  = -AntiBreachMaxAccel * Weight   (world -Z, cm/s^2)
+//  Optionally gated to "closing on the surface" (DepthRate < 0): covers the
+//  sub rising AND the surface dropping away under it on a descending wave.
+// ---------------------------------------------------------------------------
+FVector USubmarinePhysicsComponent::ComputeAntiBreachForce(const USubmarineCharacteristics* Stats)
+{
+    AntiBreachAccelZ = 0.f;
+    if (!Stats->bEnableAntiBreach) return FVector::ZeroVector;
+    if (Stats->bAntiBreachOnlyWhenClosingOnSurface && DepthRate >= 0.f) return FVector::ZeroVector;
+
+    const float StartDepth = FMath::Max(Stats->AntiBreachStartDepth, 1.f);
+    const float Weight = FMath::Clamp((StartDepth - CurrentDepth) / StartDepth, 0.f, 1.f);
+
+    AntiBreachAccelZ = -Stats->AntiBreachMaxAccel * Weight;
+    return FVector(0.f, 0.f, AntiBreachAccelZ);
+}
+
+// ---------------------------------------------------------------------------
 //  UpdateNearSurfaceState
 //  Computes bIsNearSurface and NearSurfaceAlpha from current depth.
 //  Uses blended regional water height (already in CurrentDepth) -- NOT
@@ -498,6 +525,7 @@ void USubmarinePhysicsComponent::LogPhysicsState(float DeltaTime,
     UE_LOG(LogTemp, Warning, TEXT("  DepthPressure  : %.2f"), DepthForce.Z);
     UE_LOG(LogTemp, Warning, TEXT("  ThrustZ        : %.2f  (TargetLinear=%.1f)"),
         ThrustForce.Z, TargetLinearSpeed);
+    UE_LOG(LogTemp, Warning, TEXT("  AntiBreach Z   : %.2f"), AntiBreachAccelZ);
     UE_LOG(LogTemp, Warning, TEXT("  TotalForce Z   : %.2f"), TotalForce.Z);
     UE_LOG(LogTemp, Warning, TEXT("  PhysVelocity   : (%.1f, %.1f, %.1f)"),
         PhysicsVelocity.X, PhysicsVelocity.Y, PhysicsVelocity.Z);

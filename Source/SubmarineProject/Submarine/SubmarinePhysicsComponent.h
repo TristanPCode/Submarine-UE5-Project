@@ -107,6 +107,21 @@ public:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Physics|Surface")
     float NearSurfaceAlpha = 0.f;
 
+    /**
+     * Anti-breach vertical acceleration applied this tick (cm/s^2, <= 0).
+     * Debug readout; see ComputeAntiBreachForce.
+     */
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Physics|Surface")
+    float AntiBreachAccelZ = 0.f;
+
+    /**
+     * Rate of change of CurrentDepth (cm/s). Negative = closing on the
+     * surface, whether the sub rises or the surface drops onto it.
+     * Includes all motion (pawn linear delta, waves), not just PhysicsVelocity.
+     */
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Physics|Surface")
+    float DepthRate = 0.f;
+
     // -----------------------------------------------------------------------
     //  Angular perturbation (wave roll/pitch)
     //  Written by TickComponent. Read by SubmarinePawn::TickFinalMovement
@@ -153,6 +168,11 @@ private:
     FVector AccumulatedForces = FVector::ZeroVector;
     FVector AccumulatedImpulse = FVector::ZeroVector;
 
+    // Previous-tick depth, for DepthRate. bHasPrevDepth is false until the
+    // first tick so DepthRate does not spike at spawn.
+    float PrevDepth = 0.f;
+    bool bHasPrevDepth = false;
+
     // -----------------------------------------------------------------------
     //  Angular perturbation internals
     // -----------------------------------------------------------------------
@@ -185,6 +205,11 @@ private:
     FVector ComputeDepthPressureForce() const;
     FVector ComputeThrustForce(const FVector& OwnerForward) const;
     FVector ComputeAgitationForce(const USubmarineCharacteristics* Stats);
+
+    // Downward acceleration near the surface to prevent breaching.
+    // Ramps from 0 at AntiBreachStartDepth to AntiBreachMaxAccel at depth 0.
+    // Tunable: SubmarineCharacteristics "Surface|AntiBreach".
+    FVector ComputeAntiBreachForce(const USubmarineCharacteristics* Stats);
 
     // -----------------------------------------------------------------------
     //  Helpers (extracted from TickComponent for readability)

@@ -8,8 +8,9 @@
 //
 //  THE SINGLE SOURCE OF TRUTH for wave shape, shared by CPU physics and the
 //  GPU material. The CPU reads these constants directly. The GPU receives the
-//  same numbers via MPC (Ocean_PrimaryWaveK etc.) and applies the identical
-//  formula. If these values change, BOTH physics and rendering update.
+//  fully resolved octaves via MPC Ocean_Oct1..4 (built by BuildOctave below)
+//  and only evaluates Amp * sin(dot(KDir, XY) - TimePhase). If these values
+//  change, BOTH physics and rendering update.
 //
 //  Per-octave shape (fractions/multipliers relative to the per-region base):
 //    Octave 0 = PRIMARY wave. This is the only octave physics computes.
@@ -45,6 +46,86 @@ namespace OceanGerstner
 
     // The primary octave index physics rides.
     static constexpr int32 PrimaryOctave = 0;
+
+    // -----------------------------------------------------------------------
+    //  Resolved octave (single code path for physics AND material)
+    //
+    //  BuildOctave() is the ONLY place that applies WaveK, WaveLengthScale,
+    //  direction normalization, RotAngleDeg, AmpFraction and SpeedFraction.
+    //  Physics evaluates the result with EvaluateZ(). The subsystem writes the
+    //  same result to MPC Ocean_Oct1..4 via ToMPC(), and the material only does:
+    //      Z = Oct.b * sin( dot(Oct.rg, WorldXY) - Oct.a )
+    //  So the material holds no wave constants and cannot drift from C++.
+    // -----------------------------------------------------------------------
+    struct FOctave
+    {
+        // K_i * normalized rotated direction (rad/cm). Zero if direction is degenerate.
+        FVector2D KDir = FVector2D::ZeroVector;
+
+        // Amplitude (cm) = BaseAmplitude * AmpFraction_i.
+        float Amp = 0.f;
+
+        // Angular speed (rad/s) = BaseSpeed * SpeedFraction_i.
+        float Omega = 0.f;
+    };
+
+    inline FOctave BuildOctave(int32 OctaveIndex, float BaseAmplitude, float BaseSpeed,
+        const FVector2D& BaseDirection, float WaveLengthScale)
+    {
+        FOctave O;
+        if (OctaveIndex < 0 || OctaveIndex >= NumOctaves) return O;
+
+        const float K = WaveK[OctaveIndex] * FMath::Max(WaveLengthScale, 0.0001f);
+        const FVector2D BaseDir = BaseDirection.GetSafeNormal();
+        const float RotRad = FMath::DegreesToRadians(RotAngleDeg[OctaveIndex]);
+        const float CosR = FMath::Cos(RotRad);
+        const float SinR = FMath::Sin(RotRad);
+        const FVector2D Dir(
+            BaseDir.X * CosR - BaseDir.Y * SinR,
+            BaseDir.X * SinR + BaseDir.Y * CosR);
+
+        O.KDir = Dir * K;
+        O.Amp = FMath::Max(BaseAmplitude, 0.f) * AmpFraction[OctaveIndex];
+        O.Omega = BaseSpeed * SpeedFraction[OctaveIndex];
+        return O;
+    }
+
+    // Time part of the phase (rad), wrapped to [0, 2*PI) in double precision.
+    // Wrapping is exact for sin() and keeps the GPU float small at long play times.
+    inline float TimePhase(float Omega, float Time)
+    {
+        const double P = static_cast<double>(Omega) * static_cast<double>(Time);
+        return static_cast<float>(FMath::Fmod(P, 2.0 * UE_DOUBLE_PI));
+    }
+
+    // Phase_i = dot(KDir_i, XY) - Omega_i * Time
+    inline float Phase(const FOctave& O, const FVector2D& XY, float Time)
+    {
+        return static_cast<float>(O.KDir.X * XY.X + O.KDir.Y * XY.Y)
+            - TimePhase(O.Omega, Time);
+    }
+
+    // Z_i = Amp_i * sin(Phase_i)   (sin, not cos -- material uses sin too)
+    inline float EvaluateZ(const FOctave& O, const FVector2D& XY, float Time)
+    {
+        return O.Amp * FMath::Sin(Phase(O, XY, Time));
+    }
+
+    // Packing written to MPC Ocean_Oct1..4: (KDir.x, KDir.y, Amp, TimePhase).
+    inline FLinearColor ToMPC(const FOctave& O, float Time)
+    {
+        return FLinearColor(
+            static_cast<float>(O.KDir.X), static_cast<float>(O.KDir.Y),
+            O.Amp, TimePhase(O.Omega, Time));
+    }
+
+    // CPU mirror of the material's octave node, reading the packed MPC value.
+    // Used by the debug harness to reconstruct exactly what the GPU receives.
+    inline float EvaluateZFromMPC(const FLinearColor& Packed, const FVector2D& XY)
+    {
+        const float P = static_cast<float>(Packed.R * XY.X + Packed.G * XY.Y) - Packed.A;
+        return Packed.B * FMath::Sin(P);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -218,6 +299,16 @@ struct FOceanFrameCache
     float GlobalFoamIntensity = 0.2f;
     float GlobalRefractionStrength = 0.5f;
 
+    // Packed octaves written to MPC Ocean_Oct1..4 this frame
+    // (see OceanGerstner::ToMPC). Kept here so the debug harness can
+    // reconstruct exactly what the material received.
+    FLinearColor MPCOctaves[OceanGerstner::NumOctaves] = {
+        FLinearColor::Transparent, FLinearColor::Transparent,
+        FLinearColor::Transparent, FLinearColor::Transparent };
+
+    // Game time (s) used to build MPCOctaves this frame.
+    float WaveTime = 0.f;
+
     // True once the subsystem has computed values this frame.
     bool bValid = false;
-};
+};

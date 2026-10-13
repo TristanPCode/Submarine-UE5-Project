@@ -70,6 +70,22 @@ public:
         meta = (ClampMin = "1000.0"))
     float OceanHalfExtent = 500000.f;
 
+    // Number of quads along each side of OceanPlaneMesh (SM_OceanPlane = 500).
+    // With OceanHalfExtent this gives the vertex spacing (cm):
+    //   VertexSpacing = 2 * OceanHalfExtent / MeshSubdivisions
+    // Must match the mesh asset; it is not read from the mesh.
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ocean Surface|Mesh",
+        meta = (ClampMin = "1"))
+    int32 MeshSubdivisions = 500;
+
+    // Minimum mesh vertices per wavelength for a wave octave to be drawn
+    // (unitless). Detail octaves (2-4) shorter than this fade out, because the
+    // mesh cannot represent them and they alias. Octave 1 (physics) is never
+    // faded; a warning is logged instead. ~8 = faithful, below ~4 = aliasing.
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ocean Surface|Mesh",
+        meta = (ClampMin = "2.0"))
+    float MinVerticesPerWave = 8.f;
+
     // -----------------------------------------------------------------------
     //  Material configuration
     // -----------------------------------------------------------------------
@@ -158,4 +174,4 @@ private:
 
     UPROPERTY(Transient)
     TObjectPtr<UMaterialInstanceDynamic> UndersideMID;
-};
+};

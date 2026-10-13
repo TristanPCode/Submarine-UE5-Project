@@ -697,13 +697,16 @@ void ASubmarinePawn::TickVerticalMovement(float DeltaTime)
     TargetPitch = FMath::Clamp(TargetPitch, -Stats->MaxPitchAngle, Stats->MaxPitchAngle);
     ExternalPitchVelocity = FMath::FInterpTo(ExternalPitchVelocity, 0.f, DeltaTime, Stats->Deceleration_Rotation);
 
-    // -- Accel/decel pitch toward TargetPitch -----------------------------
-    float Delta = TargetPitch - CurrentPitch;
+    // -- Surface leveling: wished (TargetPitch) -> nerfed --------------------
+    NerfedTargetPitch = ComputeSurfaceNerfedPitch(TargetPitch, DeltaTime);
+
+    // -- Accel/decel pitch toward NerfedTargetPitch ------------------------
+    float Delta = NerfedTargetPitch - CurrentPitch;
     const float StopThreshold = 0.1f;
 
     if (FMath::Abs(Delta) < StopThreshold && FMath::Abs(PitchVelocity) < 1.f)
     {
-        CurrentPitch = TargetPitch;
+        CurrentPitch = NerfedTargetPitch;
         PitchVelocity = 0.f;
     }
     else {
@@ -743,8 +746,10 @@ void ASubmarinePawn::TickVerticalMovement(float DeltaTime)
 
         // Apply movement
         //CurrentPitch += PitchVelocity * DeltaTime;
-        CurrentPitch = FMath::FInterpConstantTo( CurrentPitch, TargetPitch, DeltaTime, AppliedAcceleration);
+        CurrentPitch = FMath::FInterpConstantTo( CurrentPitch, NerfedTargetPitch, DeltaTime, AppliedAcceleration);
     }
+
+    LogSurfacePitchLeveling(DeltaTime);
 
     // Apply pitch via swept rotation so pitching into walls is detected
     const FRotator CurrentRot = GetActorRotation();
@@ -817,6 +822,105 @@ void ASubmarinePawn::TickVerticalMovement(float DeltaTime)
     }
 
 
+}
+
+// -----------------------------------------------------------------------------
+//  ComputeSurfaceNerfedPitch
+//  Wished pitch -> pitch the applied pitch is allowed to chase.
+//
+//  1. Weight  = (1 - Depth / SurfaceLevelingDepth) ^ SurfaceLevelingExponent
+//               (0 deep, 1 at the surface and above).
+//  2. Slope   = forward primary-wave slope, low-passed (SurfaceSlopeResponseTime)
+//               then rate-limited (SurfaceSlopeMaxRateDegPerSec).
+//  3. Ceiling = Slope > 0 : max(Slope - SurfacePitchSafetyMarginDeg, 0)
+//               Slope <= 0: Slope (follow the descending surface, no margin)
+//               Continuous at 0, so a flat sea gives a ceiling of exactly 0.
+//  4. Nerfed  = Lerp(Wished, min(Wished, Ceiling), Weight), clamped to
+//               +/-MaxPitchAngle.
+// -----------------------------------------------------------------------------
+float ASubmarinePawn::ComputeSurfaceNerfedPitch(float WishedPitch, float DeltaTime)
+{
+    const USubmarineCharacteristics* Stats = GetStats();
+
+    if (!Stats->bEnableSurfacePitchLeveling || !PhysicsHandler)
+    {
+        SurfaceLevelingWeight = 0.f;
+        return FMath::Clamp(WishedPitch, -Stats->MaxPitchAngle, Stats->MaxPitchAngle);
+    }
+
+    // 1. Depth weight (CurrentDepth < 0 above the surface -> weight 1)
+    const float Depth = PhysicsHandler->CurrentDepth;
+    const float Linear = FMath::Clamp(
+        1.f - Depth / FMath::Max(Stats->SurfaceLevelingDepth, 1.f), 0.f, 1.f);
+    SurfaceLevelingWeight = FMath::Pow(Linear, Stats->SurfaceLevelingExponent);
+
+    // 2. Smoothed forward slope (always updated so it is warm when we surface)
+    const float RawSlopeDeg = ComputeForwardSurfaceSlopeDeg();
+    const float LowPassAlpha = (Stats->SurfaceSlopeResponseTime > KINDA_SMALL_NUMBER)
+        ? 1.f - FMath::Exp(-DeltaTime / Stats->SurfaceSlopeResponseTime)
+        : 1.f;
+    const float LowPassed = FMath::Lerp(SmoothedSurfaceSlopeDeg, RawSlopeDeg, LowPassAlpha);
+    const float MaxStep = Stats->SurfaceSlopeMaxRateDegPerSec * DeltaTime;
+    SmoothedSurfaceSlopeDeg += FMath::Clamp(LowPassed - SmoothedSurfaceSlopeDeg, -MaxStep, MaxStep);
+
+    // 3. Ceiling
+    const float CeilingDeg = (SmoothedSurfaceSlopeDeg > 0.f)
+        ? FMath::Max(SmoothedSurfaceSlopeDeg - Stats->SurfacePitchSafetyMarginDeg, 0.f)
+        : SmoothedSurfaceSlopeDeg;
+
+    // 4. Blend and clamp
+    const float Limited = FMath::Min(WishedPitch, CeilingDeg);
+    const float Nerfed = FMath::Lerp(WishedPitch, Limited, SurfaceLevelingWeight);
+    return FMath::Clamp(Nerfed, -Stats->MaxPitchAngle, Stats->MaxPitchAngle);
+}
+
+// -----------------------------------------------------------------------------
+//  ComputeForwardSurfaceSlopeDeg
+//  Slope of the primary wave along the submarine's horizontal heading, from
+//  the analytic normal of UOceanSubsystem::QuerySurface (CPU, octave 0 only).
+//  dZ/ds = -(N.X * F.X + N.Y * F.Y) / N.Z
+// -----------------------------------------------------------------------------
+float ASubmarinePawn::ComputeForwardSurfaceSlopeDeg() const
+{
+    UWorld* World = GetWorld();
+    UGameInstance* GI = World ? World->GetGameInstance() : nullptr;
+    UOceanSubsystem* OceanSys = GI ? GI->GetSubsystem<UOceanSubsystem>() : nullptr;
+    if (!OceanSys) return 0.f;
+
+    const FVector Pos = GetActorLocation();
+    const FOceanSurfaceSample Surf = OceanSys->QuerySurface(
+        FVector2D(Pos.X, Pos.Y), World->GetTimeSeconds());
+
+    const FVector2D Heading = FVector2D(GetActorForwardVector()).GetSafeNormal();
+    const FVector N = Surf.SurfaceNormal;
+    if (N.Z < KINDA_SMALL_NUMBER || Heading.IsNearlyZero()) return 0.f;
+
+    const float dZds = -(N.X * Heading.X + N.Y * Heading.Y) / N.Z;
+    return FMath::RadiansToDegrees(FMath::Atan(dZds));
+}
+
+// -----------------------------------------------------------------------------
+//  LogSurfacePitchLeveling
+// -----------------------------------------------------------------------------
+void ASubmarinePawn::LogSurfacePitchLeveling(float DeltaTime)
+{
+    const USubmarineCharacteristics* Stats = GetStats();
+    if (!Stats->bLogSurfacePitchLeveling) return;
+
+    PitchLevelingLogTimer += DeltaTime;
+    if (PitchLevelingLogTimer < Stats->PhysicsLogFrequency) return;
+    PitchLevelingLogTimer = 0.f;
+
+    UE_LOG(LogTemp, Warning,
+        TEXT("[PitchLeveling] %s Depth=%.0f DepthRate=%.0f W=%.2f | Wished=%.1f Nerfed=%.1f Applied=%.1f | Slope=%.1f | AntiBreach=%.0f VelZ=%.0f"),
+        *GetName(),
+        PhysicsHandler ? PhysicsHandler->CurrentDepth : 0.f,
+        PhysicsHandler ? PhysicsHandler->DepthRate : 0.f,
+        SurfaceLevelingWeight,
+        TargetPitch, NerfedTargetPitch, CurrentPitch,
+        SmoothedSurfaceSlopeDeg,
+        PhysicsHandler ? PhysicsHandler->AntiBreachAccelZ : 0.f,
+        PhysicsHandler ? PhysicsHandler->PhysicsVelocity.Z : 0.f);
 }
 
 // -----------------------------------------------------------------------------
